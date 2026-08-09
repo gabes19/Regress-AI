@@ -1,16 +1,15 @@
 import re
 
-from app import app
 
-
-def test_analysis_value_error_is_shown_on_configuration_page():
-    app.config.update(TESTING=True)
-    client = app.test_client()
+def test_analysis_value_error_is_shown_on_configuration_page(
+    sample_dataset_client,
+):
+    client, dataset = sample_dataset_client
 
     response = client.post(
         "/analyze",
         data={
-            "filename": "wage_education_sample.csv",
+            "dataset_id": dataset.dataset_id,
             "research_question": "Does wage predict itself?",
             "dependent_variable": "wage",
             "main_independent_variable": "wage",
@@ -30,14 +29,15 @@ def test_analysis_value_error_is_shown_on_configuration_page():
     assert re.search(rb'value="gender"\s+checked', response.data)
 
 
-def test_invalid_bootstrap_iterations_are_shown_on_configuration_page():
-    app.config.update(TESTING=True)
-    client = app.test_client()
+def test_invalid_bootstrap_iterations_are_shown_on_configuration_page(
+    sample_dataset_client,
+):
+    client, dataset = sample_dataset_client
 
     response = client.post(
         "/analyze",
         data={
-            "filename": "wage_education_sample.csv",
+            "dataset_id": dataset.dataset_id,
             "research_question": "Does education predict wages?",
             "dependent_variable": "wage",
             "main_independent_variable": "education",

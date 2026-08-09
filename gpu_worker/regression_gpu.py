@@ -1,134 +1,191 @@
-#This module runs in the Runpod cloud-hosted 
-#Linux GPU worker environment.
-import time
-import cudf
+"""CuPy implementation used only inside the RunPod CUDA worker."""
+
+from __future__ import annotations
+
+from io import BytesIO
+import math
+from time import perf_counter
+
 import cupy as cp
+import numpy as np
+import pandas as pd
 from scipy import stats
 
-def run_gpu_analysis(
-        csv_path,
-        dependent_variable,
-        main_independent_variable,
-        controls,
-        bootstrap_iterations = 500,
-        bootstrap_indices = None
-):
-    required_columns = [dependent_variable, main_independent_variable] + controls
-    df = _load_numeric_gpu_frame(csv_path = csv_path, required_columns=required_columns)
-    x_columns = [main_independent_variable]
-    X, y = _build_design_matrices(
-        df=df,
-        dependent_variable=dependent_variable,
-        x_columns=x_columns,
-        )
-    ols_result = _fit_ols_gpu(X, y)
-    #TODO: Temporarily returning something simple. Expand after cupy math
-    return {
-        "row_count": len(df),
-        "columns": required_columns,
-        "x_shape": X.shape,
-        "y_shape": y.shape,
-        "intercept": float(ols_result["beta"][0].get()),
-        "coefficient": float(ols_result["beta"][1].get()),
-        "standard_error": float(ols_result["standard_errors"][1].get()),
-        "t_value": float(ols_result["t_values"][1].get()),
-        "p_value": float(ols_result["p_values"][1]),
-        "ci_95": [
-            float(ols_result["ci_lower"][1]),
-            float(ols_result["ci_upper"][1]),
-        ],
-        "r_squared": float(ols_result["r_squared"].get()),
-        "rmse": float(ols_result["rmse"].get()),
-        "df_residual": int(ols_result["df_residual"]),
-    }
-    
-#TODO: add support for cpu/gpu categorical variables later
-def _load_numeric_gpu_frame(csv_path, required_columns):
-    '''Loads the data in a cudf and keeps only required columns'''
-    df = cudf.read_csv(csv_path)
-    df = df[required_columns].dropna()
-    for column in required_columns:
-        if not cudf.api.types.is_numeric_dtype(df[column].dtype):
-                raise ValueError(
-                        f"GPU regression currently supports numeric columns only. "
-                        f"Column '{column}' has dtype {df[column].dtype}."
-                        )
-    return df
+from regressionlab.services.gpu_contract import (
+    BootstrapMetrics,
+    GPUAnalysisOutput,
+    GPUAnalysisRequest,
+    ModelMetrics,
+    decode_matrix_payload,
+)
 
-def _build_design_matrices(df, dependent_variable, x_columns):
-    y = df[dependent_variable].astype("float64").to_cupy()
-    X = df[x_columns].astype("float64").to_cupy()
 
-    n_rows = X.shape[0]
-    intercept = cp.ones((n_rows, 1), dtype=cp.float64)
-    X = cp.column_stack([intercept, X])
+def _finite(value):
+    value = float(value)
+    return value if math.isfinite(value) else None
 
-    return X, y
 
-def _fit_ols_gpu(X, y):
-    '''Fit model using Moore-Penrose pseudoinverse of X 
-    (generalization of the inverse matrix with 
-    Singular Value Decomposition (SVD))'''
-    #pseudo inverse of X
+def _fit_ols_gpu(X, y, main_index):
+    n_observations, n_parameters = X.shape
     x_pinv = cp.linalg.pinv(X)
-    #matmul computes estimated coefficients
     beta = x_pinv @ y
-    #matmul computes predicted y vals
-    fitted_values = X @ beta
-    #computes errors
-    residuals = y -fitted_values
-    n_observations = X.shape[0]
-    n_parameters = X.shape[1]
-    #residual degrees of freedom
+    residuals = y - X @ beta
     df_residual = n_observations - n_parameters
-    #sum of squared errors
     sse = cp.sum(residuals ** 2)
-    #total sum of squares
-    tss = cp.sum((y - cp.mean(y)) ** 2)
-    #r^2 - how much variation is explained by model
-    r_squared = 1 - (sse / tss)
-    #residual mean squared error - used to compute standard error
-    mse_resid = sse / df_residual
-    #root mean squared error - puts error in original y units
-    rmse = cp.sqrt(mse_resid)
-    #inverse-like matrix for predictor relationships
-    #used to calculate beta variance/covariance
-    xtx_inv = cp.linalg.pinv(X.T @ X)
-    #var/covar matrix for coeffs
-    cov_beta = mse_resid * xtx_inv
-    #uncertainty for each coeff
-    standard_errors = cp.sqrt(cp.diag(cov_beta))
-    #coeffs t-statistics
-    t_values = beta / standard_errors
-    #stat arrays are small -> can use prebuilt scipy
-    t_values_cpu = cp.asnumpy(t_values)
-    standard_errors_cpu = cp.asnumpy(standard_errors)
-    beta_cpu = cp.asnumpy(beta)
-    #computes two-sided p values for each coeff
-    p_values = 2 * stats.t.sf(abs(t_values_cpu), df_residual)
-    #cutoff value for a 95% confidence interval
-    t_critical = stats.t.ppf(0.975, df_residual)
-    ci_lower = beta_cpu - (t_critical * standard_errors_cpu)
-    ci_upper = beta_cpu + (t_critical * standard_errors_cpu)
+    centered = y - cp.mean(y)
+    tss = cp.sum(centered ** 2)
+
+    if df_residual > 0:
+        mse_resid = sse / df_residual
+        covariance = mse_resid * (x_pinv @ x_pinv.T)
+        standard_errors = cp.sqrt(cp.maximum(cp.diag(covariance), 0))
+        t_values = beta / standard_errors
+        beta_cpu = cp.asnumpy(beta)
+        se_cpu = cp.asnumpy(standard_errors)
+        t_cpu = cp.asnumpy(t_values)
+        p_values = 2 * stats.t.sf(np.abs(t_cpu), df_residual)
+        critical = stats.t.ppf(0.975, df_residual)
+        ci_lower = beta_cpu - critical * se_cpu
+        ci_upper = beta_cpu + critical * se_cpu
+        rmse = cp.sqrt(mse_resid)
+    else:
+        beta_cpu = cp.asnumpy(beta)
+        se_cpu = np.full(n_parameters, np.nan)
+        t_cpu = np.full(n_parameters, np.nan)
+        p_values = np.full(n_parameters, np.nan)
+        ci_lower = np.full(n_parameters, np.nan)
+        ci_upper = np.full(n_parameters, np.nan)
+        rmse = cp.asarray(cp.nan)
+
+    r_squared = 1 - sse / tss if float(tss.get()) > 0 else cp.asarray(cp.nan)
+    if df_residual > 0 and n_observations > 1:
+        adjusted = 1 - (1 - r_squared) * (n_observations - 1) / df_residual
+    else:
+        adjusted = cp.asarray(cp.nan)
+
+    predictor_count = n_parameters - 1
+    if predictor_count > 0 and df_residual > 0 and float(sse.get()) > 0:
+        explained = tss - sse
+        f_statistic = (explained / predictor_count) / (sse / df_residual)
+        f_value = _finite(f_statistic.get())
+        f_p_value = _finite(stats.f.sf(f_value, predictor_count, df_residual)) if f_value is not None else None
+    else:
+        f_value = None
+        f_p_value = None
+
+    return ModelMetrics(
+        coefficient=_finite(beta_cpu[main_index]),
+        standard_error=_finite(se_cpu[main_index]),
+        t_value=_finite(t_cpu[main_index]),
+        p_value=_finite(p_values[main_index]),
+        ci_95=[_finite(ci_lower[main_index]), _finite(ci_upper[main_index])],
+        r_squared=_finite(r_squared.get()),
+        adjusted_r_squared=_finite(adjusted.get()),
+        rmse=_finite(rmse.get()),
+        f_statistic=f_value,
+        f_p_value=f_p_value,
+        n_observations=n_observations,
+        df_residual=_finite(df_residual),
+        condition_number=_finite(cp.linalg.cond(X).get()),
+    )
 
 
+def _bootstrap_gpu(X, y, main_index, iterations, random_seed, explicit_indices, batch_size=128):
+    n_observations = X.shape[0]
+    if explicit_indices is not None:
+        indices = np.asarray(explicit_indices, dtype=np.int64)
+        if indices.shape != (iterations, n_observations):
+            raise ValueError("Explicit bootstrap indices have the wrong shape.")
+        if indices.min(initial=0) < 0 or indices.max(initial=0) >= n_observations:
+            raise ValueError("Explicit bootstrap indices are out of range.")
+    else:
+        indices = None
 
-    return {
-        "beta": beta,
-        "fitted_values": fitted_values,
-        "residuals": residuals,
-        "sse": sse,
-        "tss": tss,
-        "r_squared": r_squared,
-        "mse_resid": mse_resid,
-        "rmse": rmse,
-        "standard_errors": standard_errors,
-        "t_values": t_values,
-        "p_values": p_values,
-        "ci_lower": ci_lower,
-        "ci_upper": ci_upper,
-        "n_observations": n_observations,
-        "df_residual": df_residual,
+    try:
+        free_memory, _ = cp.cuda.runtime.memGetInfo()
+        bytes_per_iteration = max(1, n_observations * X.shape[1] * 8 * 3)
+        memory_batch = max(1, int((free_memory * 0.35) // bytes_per_iteration))
+        batch_size = max(1, min(batch_size, memory_batch))
+    except cp.cuda.runtime.CUDARuntimeError:
+        batch_size = 1
+
+    rng = cp.random.RandomState(random_seed)
+    coefficients = []
+    start = 0
+    while start < iterations:
+        count = min(batch_size, iterations - start)
+        if indices is None:
+            batch_indices = rng.randint(0, n_observations, size=(count, n_observations))
+        else:
+            batch_indices = cp.asarray(indices[start:start + count])
+        try:
+            sampled_X = X[batch_indices]
+            sampled_y = y[batch_indices]
+            beta = cp.matmul(cp.linalg.pinv(sampled_X), sampled_y[..., None])[..., 0]
+        except cp.cuda.memory.OutOfMemoryError:
+            del sampled_X, sampled_y, batch_indices
+            cp.get_default_memory_pool().free_all_blocks()
+            if count == 1:
+                raise
+            batch_size = max(1, count // 2)
+            continue
+        coefficients.append(beta[:, main_index])
+        start += count
+
+    samples = cp.concatenate(coefficients)
+    samples_cpu = cp.asnumpy(samples)
+    if not np.isfinite(samples_cpu).all():
+        raise ValueError("GPU bootstrap generated non-finite coefficients.")
+    return BootstrapMetrics(
+        mean=float(np.mean(samples_cpu)),
+        standard_error=float(np.std(samples_cpu, ddof=1)),
+        ci_95=[float(np.percentile(samples_cpu, 2.5)), float(np.percentile(samples_cpu, 97.5))],
+        samples=samples_cpu.tolist(),
+    )
+
+
+def run_gpu_analysis(request_data: GPUAnalysisRequest) -> GPUAnalysisOutput:
+    started = perf_counter()
+    raw_csv = decode_matrix_payload(request_data)
+    frame = pd.read_csv(BytesIO(raw_csv))
+    required = {
+        request_data.outcome_column,
+        request_data.main_predictor_column,
+        *request_data.bootstrap_predictor_columns,
+        *(column for columns in request_data.model_predictor_columns for column in columns),
     }
+    if not required.issubset(frame.columns):
+        raise ValueError("GPU matrix does not contain every requested column.")
+    frame = frame.loc[:, sorted(required)].apply(pd.to_numeric, errors="raise")
+    if frame.empty or not np.isfinite(frame.to_numpy(dtype=float)).all():
+        raise ValueError("GPU matrix must contain finite numeric data.")
 
+    y = cp.asarray(frame[request_data.outcome_column].to_numpy(dtype=np.float64))
+    models = []
+    for predictor_columns in request_data.model_predictor_columns:
+        predictors = cp.asarray(frame[predictor_columns].to_numpy(dtype=np.float64))
+        X = cp.column_stack([cp.ones(len(frame), dtype=cp.float64), predictors])
+        main_index = predictor_columns.index(request_data.main_predictor_column) + 1
+        models.append(_fit_ols_gpu(X, y, main_index))
 
+    bootstrap_columns = request_data.bootstrap_predictor_columns
+    bootstrap_X = cp.asarray(frame[bootstrap_columns].to_numpy(dtype=np.float64))
+    bootstrap_X = cp.column_stack([cp.ones(len(frame), dtype=cp.float64), bootstrap_X])
+    bootstrap_main_index = bootstrap_columns.index(request_data.main_predictor_column) + 1
+    bootstrap = _bootstrap_gpu(
+        bootstrap_X,
+        y,
+        bootstrap_main_index,
+        request_data.bootstrap_iterations,
+        request_data.random_seed,
+        request_data.bootstrap_indices,
+    )
+    cp.cuda.Stream.null.synchronize()
+    properties = cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)
+    gpu_name = properties["name"].decode() if isinstance(properties["name"], bytes) else str(properties["name"])
+    return GPUAnalysisOutput(
+        models=models,
+        bootstrap=bootstrap,
+        runtime_seconds=perf_counter() - started,
+        gpu_name=gpu_name,
+    )

@@ -395,17 +395,14 @@ def test_fallback_summary_renders_for_plain_text_and_latex():
 
 
 def test_analyze_renders_structured_fallback_without_openai(
-    tmp_path,
-    monkeypatch,
+    sample_dataset_client,
 ):
-    monkeypatch.setitem(app.extensions, "openai_client", None)
-    app.config.update(TESTING=True, REPORTS_FOLDER=tmp_path)
-    client = app.test_client()
+    client, dataset = sample_dataset_client
 
     response = client.post(
         "/analyze",
         data={
-            "filename": "wage_education_sample.csv",
+            "dataset_id": dataset.dataset_id,
             "research_question": "Does education predict wages?",
             "dependent_variable": "wage",
             "main_independent_variable": "education",
