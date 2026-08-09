@@ -11,6 +11,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from regressionlab.services.regression import clean_metric
+from regressionlab.services.llm_summary import render_analysis_summary_text
 
 
 class ReportExportError(Exception):
@@ -117,7 +118,8 @@ def format_number(value, digits=3):
     return f"{metric:.{digits}f}"
 
 def latex_summary(summary):
-    lines = [line.strip() for line in str(summary or "").splitlines()]
+    summary_text = render_analysis_summary_text(summary)
+    lines = [line.strip() for line in summary_text.splitlines()]
     lines = [line for line in lines if line]
 
     if not lines:

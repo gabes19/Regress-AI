@@ -49,6 +49,8 @@ build/
 
 # Ignore Python artifacts
 __pycache__/
+.pytest_cache/
+tests/.pytest-tmp-*/
 *.pyc
 *.pyo
 *.pyd

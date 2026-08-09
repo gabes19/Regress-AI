@@ -284,11 +284,36 @@
       overflow-wrap: anywhere;
     }
 
-    .note-panel p {
+    .note-panel p,
+    .note-panel li {
       margin: 0;
       color: var(--muted);
       font-size: 13px;
       line-height: 1.7;
+    }
+
+    .summary-block + .summary-block {
+      border-top: 1px solid var(--line);
+      margin-top: 14px;
+      padding-top: 14px;
+    }
+
+    .summary-label {
+      color: var(--text);
+      font-size: 12px;
+      margin: 0 0 5px;
+      text-transform: uppercase;
+    }
+
+    .summary-list {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .summary-caveat,
+    .summary-unavailable {
+      color: var(--muted-strong);
+      font-style: italic;
     }
 
     .actions {
@@ -529,9 +554,53 @@
 
             <section class="note-panel">
               <h3 class="section-title">LLM Research Summary</h3>
-              <p>
-                {{ llm_summary or "No LLM summary was generated for this analysis. This is an associational regression analysis, not causal proof." }}
-              </p>
+              {% if llm_summary.generation_status != "generated" %}
+                <div class="summary-block">
+                  <p class="summary-unavailable">
+                    AI explanation unavailable; showing a deterministic summary of the analysis.
+                  </p>
+                </div>
+              {% endif %}
+
+              <div class="summary-block">
+                <h4 class="summary-label">Plain-English answer</h4>
+                <p>{{ llm_summary.plain_english_answer }}</p>
+              </div>
+              <div class="summary-block">
+                <h4 class="summary-label">Main finding</h4>
+                <p>{{ llm_summary.main_finding }}</p>
+              </div>
+              <div class="summary-block">
+                <h4 class="summary-label">Robustness after controls</h4>
+                <p>{{ llm_summary.robustness }}</p>
+              </div>
+              <div class="summary-block">
+                <h4 class="summary-label">Bootstrap uncertainty</h4>
+                <p>{{ llm_summary.bootstrap_uncertainty }}</p>
+              </div>
+
+              {% if llm_summary.diagnostics_warnings %}
+                <div class="summary-block">
+                  <h4 class="summary-label">Warnings</h4>
+                  <ul class="summary-list">
+                    {% for warning in llm_summary.diagnostics_warnings %}
+                      <li>{{ warning }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              {% endif %}
+
+              <div class="summary-block">
+                <h4 class="summary-label">Suggested next checks</h4>
+                <ul class="summary-list">
+                  {% for next_check in llm_summary.suggested_next_checks %}
+                    <li>{{ next_check }}</li>
+                  {% endfor %}
+                </ul>
+              </div>
+              <div class="summary-block">
+                <p class="summary-caveat">{{ llm_summary.causal_caveat }}</p>
+              </div>
             </section>
           </aside>
         </div>

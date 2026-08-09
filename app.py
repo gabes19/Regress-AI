@@ -1,6 +1,12 @@
 import os
+from time import perf_counter
+
 import pandas as pd
+from dotenv import load_dotenv
 from flask import Flask, abort, render_template, request, send_file
+
+load_dotenv()
+
 from config import Config
 from werkzeug.utils import secure_filename
 from regressionlab.services.charts_and_plots import (
@@ -17,9 +23,12 @@ from regressionlab.services.data_processing import (
     prepare_analysis_data,
 )
 from regressionlab.services.bootstrap_cpu import bootstrap_coefficient
-from regressionlab.services.llm_handler import (
-    build_llm_summary_payload,
-    generate_llm_summary
+from regressionlab.services.llm_summary import (
+    LLMSummaryError,
+    build_fallback_summary,
+    build_summary_facts,
+    create_openai_client,
+    generate_llm_summary,
 )
 from regressionlab.services.export_report import (
     ExportNotFoundError,
@@ -34,6 +43,11 @@ from regressionlab.services.export_report import (
 
 app = Flask(__name__)
 app.config.from_object(Config)
+app.logger.setLevel(app.config["LOG_LEVEL"])
+app.extensions["openai_client"] = create_openai_client(
+    api_key=app.config.get("OPENAI_API_KEY"),
+    timeout_seconds=app.config["OPENAI_TIMEOUT_SECONDS"],
+)
 
 
 @app.template_filter("metric")
@@ -120,6 +134,7 @@ def analyze():
             400,
         )
 
+    analysis_started_at = perf_counter()
     try:
         bootstrap_iterations = int(bootstrap_iterations)
     except (TypeError, ValueError):
@@ -150,6 +165,8 @@ def analyze():
     except ValueError as error:
         return render_configuration_error(str(error))
 
+    analysis_runtime_seconds = perf_counter() - analysis_started_at
+
     baseline_coefficient = model_results[0]["coefficient"]
     final_coefficient = model_results[-1]["coefficient"]
     coefficient_change = final_coefficient - baseline_coefficient
@@ -162,27 +179,30 @@ def analyze():
         bootstrap_results,
         main_independent_variable
     )
-    llm_payload = build_llm_summary_payload(
-    research_question=research_question,
-    dependent_variable=dependent_variable,
-    main_independent_variable=main_independent_variable,
-    controls=controls,
-    model_results=model_results,
-    bootstrap_results=bootstrap_results,
-    bootstrap_iterations=bootstrap_iterations,
-    baseline_coefficient=baseline_coefficient,
-    final_coefficient=final_coefficient,
-    coefficient_change=coefficient_change,
-)
+    summary_facts = build_summary_facts(
+        research_question=research_question,
+        dependent_variable=dependent_variable,
+        main_independent_variable=main_independent_variable,
+        controls=controls,
+        model_results=model_results,
+        bootstrap_results=bootstrap_results,
+        bootstrap_iterations=bootstrap_iterations,
+        compute_mode="CPU",
+        runtime_seconds=analysis_runtime_seconds,
+    )
     try:
-        llm_summary = generate_llm_summary(llm_payload=llm_payload)
-    except Exception as error:
-        print(f"LLM summary failed: {error}")
-        llm_summary = (
-            "LLM summary unavailable. Review the coefficient table, coefficient stability chart, "
-            "and bootstrap interval directly. This is an associational regression analysis, "
-            "not causal proof."
+        llm_summary = generate_llm_summary(
+            summary_facts,
+            client=app.extensions.get("openai_client"),
+            model=app.config["OPENAI_MODEL"],
+            pricing=app.config["OPENAI_MODEL_PRICING"],
+            max_output_tokens=app.config["OPENAI_MAX_OUTPUT_TOKENS"],
+            logger=app.logger,
         )
+    except LLMSummaryError:
+        llm_summary = build_fallback_summary(summary_facts)
+
+    llm_summary_data = llm_summary.model_dump(mode="json")
     export_payload = build_export_payload(
         research_question=research_question,
         dependent_variable=dependent_variable,
@@ -195,7 +215,7 @@ def analyze():
         coefficient_change=coefficient_change,
         coefficient_chart=coefficient_chart,
         bootstrap_results=bootstrap_results,
-        llm_summary=llm_summary
+        llm_summary=llm_summary_data
     )
     export_token = store_export_payload(
         export_payload,
@@ -217,7 +237,7 @@ def analyze():
         coefficient_plot_html=coefficient_plot_html,
         bootstrap_results=bootstrap_results,
         bootstrap_histogram_html=bootstrap_histogram_html,
-        llm_summary=llm_summary,
+        llm_summary=llm_summary_data,
         export_token=export_token
     )
 

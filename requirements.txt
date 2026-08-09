@@ -3,6 +3,7 @@ pandas
 plotly
 statsmodels
 numpy
-openai
+openai>=2.44,<3
+pydantic>=2,<3
 python-dotenv
 matplotlib
