@@ -38,6 +38,8 @@ def build_export_payload(
     coefficient_chart,
     bootstrap_results,
     llm_summary,
+    compute_mode="CPU",
+    runtime_seconds=None,
 ):
     '''Build a compact report payload for immediate PDF/LaTeX export.'''
     return {
@@ -54,6 +56,8 @@ def build_export_payload(
         "coefficient_chart": coefficient_chart,
         "bootstrap_results": bootstrap_results,
         "llm_summary": llm_summary,
+        "compute_mode": compute_mode,
+        "runtime_seconds": runtime_seconds,
     }
 
 def store_export_payload(export_payload, reports_folder):
@@ -224,6 +228,9 @@ def build_latex_document(payload):
 \textbf{{Dependent variable:}} {latex_escape(payload["dependent_variable"])}\\
 \textbf{{Main independent variable:}} {latex_escape(payload["main_independent_variable"])}\\
 \textbf{{Controls:}} {latex_escape(controls_text)}
+
+\textbf{{Compute mode:}} {latex_escape(payload.get("compute_mode", "CPU"))}\\
+\textbf{{Compute runtime:}} {format_number(payload.get("runtime_seconds"), 3)} seconds
 
 \section*{{Main Results}}
 \textbf{{Baseline coefficient:}} {format_number(payload["baseline_coefficient"])}\\

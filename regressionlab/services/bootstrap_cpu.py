@@ -10,6 +10,7 @@ def bootstrap_coefficient(
     main_independent_variable: str,
     iterations: int,
     random_seed: int | None = None,
+    bootstrap_indices=None,
 ):
     """Bootstrap the main coefficient from prepared model data."""
 
@@ -32,11 +33,22 @@ def bootstrap_coefficient(
     random_generator = np.random.default_rng(random_seed)
     coefficients = np.empty(iterations, dtype=float)
 
+    if bootstrap_indices is not None:
+        bootstrap_indices = np.asarray(bootstrap_indices, dtype=np.int64)
+        if bootstrap_indices.shape != (iterations, observation_count):
+            raise ValueError("Explicit bootstrap indices have the wrong shape.")
+        if bootstrap_indices.min(initial=0) < 0 or bootstrap_indices.max(initial=0) >= observation_count:
+            raise ValueError("Explicit bootstrap indices are out of range.")
+
     for iteration in range(iterations):
-        sample_positions = random_generator.integers(
-            low=0,
-            high=observation_count,
-            size=observation_count,
+        sample_positions = (
+            bootstrap_indices[iteration]
+            if bootstrap_indices is not None
+            else random_generator.integers(
+                low=0,
+                high=observation_count,
+                size=observation_count,
+            )
         )
 
         sample_y = data.y.iloc[sample_positions].reset_index(drop=True)

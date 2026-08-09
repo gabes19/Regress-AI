@@ -1,28 +1,54 @@
 import os
-from time import perf_counter
-
 import pandas as pd
 from dotenv import load_dotenv
-from flask import Flask, abort, render_template, request, send_file
+from flask import (
+    Flask,
+    abort,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 
 load_dotenv()
 
 from config import Config
-from werkzeug.utils import secure_filename
 from regressionlab.services.charts_and_plots import (
     create_bootstrap_histogram_plot,
     create_coefficient_chart,
     create_coefficient_plot,
 )
-from regressionlab.services.regression import(
-    clean_metric,
-    fit_models
-)
+from regressionlab.services.regression import clean_metric
 from regressionlab.services.data_processing import (
     parse_columns,
     prepare_analysis_data,
 )
-from regressionlab.services.bootstrap_cpu import bootstrap_coefficient
+from regressionlab.services.auth_service import (
+    configure_google_oauth,
+    current_user,
+    logout_csrf_token,
+    validate_logout_csrf,
+)
+from regressionlab.services.compute_router import (
+    ComputeUnavailableError,
+    run_analysis_compute,
+)
+from regressionlab.services.gpu_client import RunPodClient
+from regressionlab.services.gpu_usage import (
+    initialize_gpu_database,
+    remaining_gpu_quota,
+    upsert_google_user,
+)
+from regressionlab.services.dataset_service import (
+    DatasetError,
+    DatasetNotFoundError,
+    delete_dataset,
+    load_dataset,
+    store_existing_dataset,
+    store_uploaded_dataset,
+)
 from regressionlab.services.llm_summary import (
     LLMSummaryError,
     build_fallback_summary,
@@ -48,6 +74,36 @@ app.extensions["openai_client"] = create_openai_client(
     api_key=app.config.get("OPENAI_API_KEY"),
     timeout_seconds=app.config["OPENAI_TIMEOUT_SECONDS"],
 )
+initialize_gpu_database(app.config["GPU_USAGE_DATABASE"])
+app.extensions["runpod_client"] = RunPodClient(
+    endpoint_id=app.config.get("RUNPOD_ENDPOINT_ID"),
+    api_key=app.config.get("RUNPOD_API_KEY"),
+    wait_milliseconds=app.config["RUNPOD_WAIT_MILLISECONDS"],
+    timeout_seconds=app.config["RUNPOD_HTTP_TIMEOUT_SECONDS"],
+    execution_timeout_seconds=app.config["RUNPOD_EXECUTION_TIMEOUT_SECONDS"],
+    price_per_second=app.config["GPU_PRICE_PER_SECOND_USD"],
+    logger=app.logger,
+)
+app.extensions["google_oauth"] = configure_google_oauth(app)
+
+
+@app.context_processor
+def inject_account_context():
+    user = current_user()
+    quota = None
+    if user:
+        quota = remaining_gpu_quota(
+            app.config["GPU_USAGE_DATABASE"],
+            user["id"],
+            app.config["GPU_DAILY_USER_LIMIT"],
+            app.config["GPU_MONTHLY_USER_LIMIT"],
+        )
+    return {
+        "current_user": user,
+        "gpu_quota": quota,
+        "google_login_enabled": app.extensions.get("google_oauth") is not None,
+        "logout_csrf_token": logout_csrf_token(),
+    }
 
 
 @app.template_filter("metric")
@@ -65,6 +121,39 @@ SAMPLE_DATASET_FILENAME = "wage_education_sample.csv"
 def start():
     return render_template("index.html")
 
+
+@app.route("/login")
+def login():
+    google = app.extensions.get("google_oauth")
+    if google is None:
+        abort(503, description="Google login is not configured.")
+    return google.authorize_redirect(url_for("google_callback", _external=True))
+
+
+@app.route("/auth/google/callback")
+def google_callback():
+    google = app.extensions.get("google_oauth")
+    if google is None:
+        abort(503, description="Google login is not configured.")
+    try:
+        token = google.authorize_access_token()
+        claims = token.get("userinfo") or google.parse_id_token(token)
+        user = upsert_google_user(app.config["GPU_USAGE_DATABASE"], claims)
+    except Exception as error:
+        app.logger.warning("Google login failed error_type=%s", type(error).__name__)
+        abort(400, description="Google login could not be verified.")
+    session.clear()
+    session["user"] = user
+    return redirect(url_for("start"))
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    if not validate_logout_csrf(request.form.get("csrf_token")):
+        abort(400, description="Invalid logout request.")
+    session.clear()
+    return redirect(url_for("start"))
+
 @app.route("/upload", methods=["POST"])
 def upload():
     '''Handles user CSV upload'''
@@ -72,55 +161,97 @@ def upload():
 
     if uploaded_file is None or uploaded_file.filename == "":
         return "No file uploaded", 400
-    
-    if not uploaded_file.filename.endswith(".csv"):
-        return "Please upload a CSV file", 400
-    
-    filename = secure_filename(uploaded_file.filename)
-    save_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
 
-    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
-    uploaded_file.save(save_path)
-    columns = parse_columns(save_path)
+    try:
+        dataset = store_uploaded_dataset(
+            uploaded_file,
+            upload_folder=app.config["UPLOAD_FOLDER"],
+        )
+        parse_columns(dataset.storage_path)
+    except DatasetError as error:
+        return str(error), 400
+    except (
+        UnicodeDecodeError,
+        pd.errors.EmptyDataError,
+        pd.errors.ParserError,
+    ):
+        if "dataset" in locals():
+            delete_dataset(
+                dataset.dataset_id,
+                upload_folder=app.config["UPLOAD_FOLDER"],
+            )
+        return "The uploaded file could not be read as CSV data.", 400
 
-    return render_template("configure.html", filename=filename, columns=columns)
+    return redirect(
+        url_for("configure_dataset", dataset_id=dataset.dataset_id)
+    )
+
+
+@app.route("/configure/<dataset_id>")
+def configure_dataset(dataset_id):
+    try:
+        dataset = load_dataset(
+            dataset_id,
+            upload_folder=app.config["UPLOAD_FOLDER"],
+        )
+    except DatasetNotFoundError as error:
+        abort(404, description=str(error))
+
+    return render_template(
+        "configure.html",
+        dataset_id=dataset.dataset_id,
+        filename=dataset.original_filename,
+        columns=parse_columns(dataset.storage_path),
+    )
 
 @app.route("/sample/wage-education")
 def sample_wage_education():
     '''Load the bundled wage/education sample dataset.'''
     sample_path = os.path.join(
-        app.config["UPLOAD_FOLDER"],
+        app.config["SAMPLE_DATA_FOLDER"],
         SAMPLE_DATASET_FILENAME
     )
 
-    if not os.path.exists(sample_path):
-        abort(404, description="Sample dataset not found")
+    try:
+        dataset = store_existing_dataset(
+            sample_path,
+            upload_folder=app.config["UPLOAD_FOLDER"],
+            original_filename=SAMPLE_DATASET_FILENAME,
+        )
+    except DatasetNotFoundError as error:
+        abort(404, description=str(error))
 
-    columns = parse_columns(sample_path)
-    return render_template(
-        "configure.html",
-        filename=SAMPLE_DATASET_FILENAME,
-        columns=columns
+    return redirect(
+        url_for("configure_dataset", dataset_id=dataset.dataset_id)
     )
 
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    filename = request.form.get("filename")
+    dataset_id = request.form.get("dataset_id")
     research_question = request.form.get("research_question")
     dependent_variable = request.form.get("dependent_variable")
     main_independent_variable = request.form.get("main_independent_variable")
     controls = request.form.getlist("controls")
     bootstrap_iterations = request.form.get("bootstrap_iterations")
 
-    csv_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    try:
+        dataset = load_dataset(
+            dataset_id,
+            upload_folder=app.config["UPLOAD_FOLDER"],
+        )
+    except DatasetNotFoundError as error:
+        abort(404, description=str(error))
+
+    csv_path = dataset.storage_path
     df = pd.read_csv(csv_path)
 
     def render_configuration_error(message):
         return (
             render_template(
                 "configure.html",
-                filename=filename,
+                dataset_id=dataset.dataset_id,
+                filename=dataset.original_filename,
                 columns=parse_columns(csv_path),
                 error_message=message,
                 research_question=research_question,
@@ -134,7 +265,6 @@ def analyze():
             400,
         )
 
-    analysis_started_at = perf_counter()
     try:
         bootstrap_iterations = int(bootstrap_iterations)
     except (TypeError, ValueError):
@@ -150,22 +280,23 @@ def analyze():
             controls=controls,
         )
 
-        model_results = fit_models(
+        compute_result = run_analysis_compute(
             data=prepared_data,
             dependent_variable=dependent_variable,
             main_independent_variable=main_independent_variable,
             controls=controls,
+            bootstrap_iterations=bootstrap_iterations,
+            config=app.config,
+            gpu_client=app.extensions.get("runpod_client"),
+            user_id=(current_user() or {}).get("id"),
+            logger=app.logger,
         )
-
-        bootstrap_results = bootstrap_coefficient(
-            data=prepared_data,
-            main_independent_variable=main_independent_variable,
-            iterations=bootstrap_iterations,
-        )
-    except ValueError as error:
+        model_results = compute_result.model_results
+        bootstrap_results = compute_result.bootstrap_results
+    except (ValueError, ComputeUnavailableError) as error:
         return render_configuration_error(str(error))
 
-    analysis_runtime_seconds = perf_counter() - analysis_started_at
+    compute_mode = compute_result.compute_mode
 
     baseline_coefficient = model_results[0]["coefficient"]
     final_coefficient = model_results[-1]["coefficient"]
@@ -187,8 +318,8 @@ def analyze():
         model_results=model_results,
         bootstrap_results=bootstrap_results,
         bootstrap_iterations=bootstrap_iterations,
-        compute_mode="CPU",
-        runtime_seconds=analysis_runtime_seconds,
+        compute_mode=compute_mode,
+        runtime_seconds=compute_result.runtime_seconds,
     )
     try:
         llm_summary = generate_llm_summary(
@@ -215,7 +346,9 @@ def analyze():
         coefficient_change=coefficient_change,
         coefficient_chart=coefficient_chart,
         bootstrap_results=bootstrap_results,
-        llm_summary=llm_summary_data
+        llm_summary=llm_summary_data,
+        compute_mode=compute_mode,
+        runtime_seconds=compute_result.runtime_seconds,
     )
     export_token = store_export_payload(
         export_payload,
@@ -238,7 +371,10 @@ def analyze():
         bootstrap_results=bootstrap_results,
         bootstrap_histogram_html=bootstrap_histogram_html,
         llm_summary=llm_summary_data,
-        export_token=export_token
+        export_token=export_token,
+        compute_mode=compute_mode,
+        compute_runtime_seconds=compute_result.runtime_seconds,
+        gpu_name=compute_result.gpu_name,
     )
 
 

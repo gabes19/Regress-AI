@@ -59,6 +59,7 @@ tests/.pytest-tmp-*/
 /.venv*/
 venv/
 env/
+/instance/
 
 # Ignore package manager files
 node_modules/

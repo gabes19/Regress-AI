@@ -64,6 +64,19 @@
       white-space: nowrap;
     }
 
+    .status a,
+    .status button {
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      min-height: auto;
+      width: auto;
+      padding: 0;
+      font: inherit;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
     main {
       flex: 1;
       display: grid;
@@ -518,6 +531,19 @@
   <div class="page">
     <header class="topbar" aria-label="Application header">
       <h1 class="brand">RegressAI</h1>
+      <div class="status">
+        {% if current_user %}
+          {{ current_user.display_name or current_user.email }} · GPU {{ gpu_quota.daily }}/day, {{ gpu_quota.monthly }}/month
+          <form action="/logout" method="post" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ logout_csrf_token }}">
+            <button type="submit">Sign out</button>
+          </form>
+        {% elif google_login_enabled %}
+          <a href="/login">Sign in for cloud GPU</a>
+        {% else %}
+          CPU mode
+        {% endif %}
+      </div>
     </header>
 
     <main>
@@ -547,7 +573,7 @@
 
         <div class="content-grid">
           <form class="analysis-form" action="/analyze" method="post">
-            <input type="hidden" name="filename" value="{{ filename }}">
+            <input type="hidden" name="dataset_id" value="{{ dataset_id }}">
 
             <div class="field-group">
               <label for="research_question">Research question</label>
@@ -617,7 +643,7 @@
                 step="100"
                 value="{{ selected_bootstrap_iterations|default(500, true) }}"
               >
-              <p class="hint">Start small while developing. Larger bootstrap jobs can move to GPU later.</p>
+              <p class="hint">Eligible large jobs use cloud GPU automatically when you are signed in and quota is available.</p>
             </div>
 
             <div class="actions">

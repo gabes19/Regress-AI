@@ -7,3 +7,5 @@ openai>=2.44,<3
 pydantic>=2,<3
 python-dotenv
 matplotlib
+Authlib>=1.6,<2
+requests>=2.32,<3
