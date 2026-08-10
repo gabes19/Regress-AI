@@ -30,9 +30,19 @@ def calculate_work_units(data, bootstrap_iterations):
     return len(data.y) * (len(data.X.columns) + 1) * bootstrap_iterations
 
 
-def should_route_to_gpu(data, bootstrap_iterations, minimum_iterations, minimum_work_units):
+def should_route_to_gpu(
+    data,
+    bootstrap_iterations,
+    minimum_work_units,
+    opt_in_iteration_threshold,
+    gpu_opt_in=False,
+):
     work_units = calculate_work_units(data, bootstrap_iterations)
-    return bootstrap_iterations >= minimum_iterations or work_units >= minimum_work_units
+    workload_qualifies = work_units >= minimum_work_units
+    consent_granted = (
+        bootstrap_iterations <= opt_in_iteration_threshold or gpu_opt_in
+    )
+    return workload_qualifies and consent_granted
 
 
 def _run_cpu(data, dependent_variable, main_independent_variable, controls, iterations, mode):
@@ -61,13 +71,24 @@ def run_analysis_compute(
     gpu_client=None,
     user_id=None,
     logger=None,
+    gpu_opt_in=False,
 ):
     work_units = calculate_work_units(data, bootstrap_iterations)
+    consent_required = (
+        work_units >= config["GPU_MIN_WORK_UNITS"]
+        and bootstrap_iterations > config["GPU_OPT_IN_ITERATION_THRESHOLD"]
+    )
+    if consent_required and not gpu_opt_in:
+        raise ComputeUnavailableError(
+            "This workload qualifies for cloud GPU computing. Enable the cloud "
+            "GPU option or reduce the bootstrap iterations and try again."
+        )
     candidate = should_route_to_gpu(
         data,
         bootstrap_iterations,
-        config["GPU_MIN_BOOTSTRAP_ITERATIONS"],
         config["GPU_MIN_WORK_UNITS"],
+        config["GPU_OPT_IN_ITERATION_THRESHOLD"],
+        gpu_opt_in,
     )
     provider_available = bool(
         config.get("RUNPOD_ENABLED")

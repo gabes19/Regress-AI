@@ -1,5 +1,6 @@
 runpod==1.11.0
 cupy-cuda12x==14.1.1
+nvidia-cuda-runtime-cu12==12.9.79
 numpy==2.2.6
 pandas==2.2.3
 scipy==1.15.3

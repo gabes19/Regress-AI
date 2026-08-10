@@ -47,3 +47,42 @@ def test_invalid_bootstrap_iterations_are_shown_on_configuration_page(
 
     assert response.status_code == 400
     assert b"Bootstrap iterations must be a whole number." in response.data
+
+
+def test_gpu_checkbox_is_hidden_until_iterations_exceed_threshold(
+    sample_dataset_client,
+):
+    client, dataset = sample_dataset_client
+
+    response = client.get(f"/configure/{dataset.dataset_id}")
+
+    assert response.status_code == 200
+    assert re.search(rb'id="gpu-opt-in-panel"\s+hidden', response.data)
+    assert re.search(rb'<input[^>]+id="use_gpu"[^>]+disabled[^>]*>', response.data)
+    assert b"iterations > gpuOptInThreshold" in response.data
+
+
+def test_gpu_checkbox_selection_is_preserved_after_validation_error(
+    sample_dataset_client,
+):
+    client, dataset = sample_dataset_client
+
+    response = client.post(
+        "/analyze",
+        data={
+            "dataset_id": dataset.dataset_id,
+            "research_question": "Does wage predict itself?",
+            "dependent_variable": "wage",
+            "main_independent_variable": "wage",
+            "bootstrap_iterations": "2500",
+            "use_gpu": "on",
+        },
+    )
+
+    assert response.status_code == 400
+    panel = re.search(
+        rb'<fieldset\s+id="gpu-opt-in-panel"(?P<attributes>[^>]*)>',
+        response.data,
+    )
+    assert panel and b"hidden" not in panel.group("attributes")
+    assert re.search(rb'<input[^>]+id="use_gpu"[^>]+checked[^>]*>', response.data)

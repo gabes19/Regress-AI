@@ -4,15 +4,62 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
+
+def _environment_flag(name, default=False):
+    return os.getenv(name, str(default)).strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _comma_separated(name):
+    value = os.getenv(name, "")
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    return items or None
+
 class Config:
+    APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+    IS_PRODUCTION = APP_ENV == "production"
     SECRET_KEY = os.getenv("FLASK_SECRET_KEY") or os.urandom(32)
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
-    SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
+    SESSION_COOKIE_SECURE = _environment_flag(
+        "SESSION_COOKIE_SECURE", IS_PRODUCTION
+    )
+    SESSION_COOKIE_NAME = "regressai_session"
+    WTF_CSRF_TIME_LIMIT = 3600
+    TRUSTED_HOSTS = _comma_separated("TRUSTED_HOSTS")
+    PROXY_FIX_ENABLED = _environment_flag(
+        "PROXY_FIX_ENABLED", IS_PRODUCTION
+    )
+    AUTH_REQUIRED = _environment_flag("AUTH_REQUIRED", IS_PRODUCTION)
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-    UPLOAD_FOLDER = BASE_DIR / "uploads"
-    REPORTS_FOLDER = BASE_DIR / "reports"
+    DATA_ROOT = Path(os.getenv("DATA_ROOT", str(BASE_DIR))).resolve()
+    UPLOAD_FOLDER = DATA_ROOT / "uploads"
+    REPORTS_FOLDER = DATA_ROOT / "reports"
     SAMPLE_DATA_FOLDER = BASE_DIR / "sample_data"
+    MAX_CONTENT_LENGTH = int(
+        os.getenv("MAX_UPLOAD_BYTES", str(15 * 1024 * 1024))
+    )
+    MAX_CSV_ROWS = int(os.getenv("MAX_CSV_ROWS", "100000"))
+    MAX_CSV_COLUMNS = int(os.getenv("MAX_CSV_COLUMNS", "100"))
+    MIN_BOOTSTRAP_ITERATIONS = int(
+        os.getenv("MIN_BOOTSTRAP_ITERATIONS", "100")
+    )
+    MAX_BOOTSTRAP_ITERATIONS = int(
+        os.getenv("MAX_BOOTSTRAP_ITERATIONS", "10000")
+    )
+    MAX_RESEARCH_QUESTION_LENGTH = int(
+        os.getenv("MAX_RESEARCH_QUESTION_LENGTH", "1000")
+    )
+    DATA_RETENTION_HOURS = int(os.getenv("DATA_RETENTION_HOURS", "24"))
+    CLEANUP_INTERVAL_SECONDS = int(
+        os.getenv("CLEANUP_INTERVAL_SECONDS", "900")
+    )
+    LOGIN_RATE_LIMIT = os.getenv("LOGIN_RATE_LIMIT", "10 per minute")
+    UPLOAD_RATE_LIMIT = os.getenv("UPLOAD_RATE_LIMIT", "10 per hour")
+    ANALYSIS_RATE_LIMIT = os.getenv("ANALYSIS_RATE_LIMIT", "20 per hour")
+    EXPORT_RATE_LIMIT = os.getenv("EXPORT_RATE_LIMIT", "30 per hour")
+    RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI", "memory://")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     OPENAI_MODEL = "gpt-5.4-nano-2026-03-17"
     OPENAI_TIMEOUT_SECONDS = float(
@@ -27,7 +74,7 @@ class Config:
         "output_per_million": Decimal("1.25"),
     }
 
-    INSTANCE_FOLDER = BASE_DIR / "instance"
+    INSTANCE_FOLDER = DATA_ROOT / "instance"
     GPU_USAGE_DATABASE = INSTANCE_FOLDER / "regressai.sqlite"
     RUNPOD_ENABLED = os.getenv("RUNPOD_ENABLED", "false").lower() == "true"
     RUNPOD_ENDPOINT_ID = os.getenv("RUNPOD_ENDPOINT_ID")
@@ -38,8 +85,10 @@ class Config:
     GPU_MAX_ENCODED_PAYLOAD_BYTES = int(os.getenv("GPU_MAX_ENCODED_PAYLOAD_BYTES", str(15 * 1024 * 1024)))
     GPU_MAX_DECOMPRESSED_BYTES = int(os.getenv("GPU_MAX_DECOMPRESSED_BYTES", str(256 * 1024 * 1024)))
     GPU_MAX_BOOTSTRAP_ITERATIONS = int(os.getenv("GPU_MAX_BOOTSTRAP_ITERATIONS", "10000"))
-    GPU_MIN_BOOTSTRAP_ITERATIONS = int(os.getenv("GPU_MIN_BOOTSTRAP_ITERATIONS", "2000"))
-    GPU_MIN_WORK_UNITS = int(os.getenv("GPU_MIN_WORK_UNITS", "10000000"))
+    GPU_OPT_IN_ITERATION_THRESHOLD = int(
+        os.getenv("GPU_OPT_IN_ITERATION_THRESHOLD", "2000")
+    )
+    GPU_MIN_WORK_UNITS = int(os.getenv("GPU_MIN_WORK_UNITS", "60000000"))
     CPU_FALLBACK_MAX_WORK_UNITS = int(os.getenv("CPU_FALLBACK_MAX_WORK_UNITS", "25000000"))
     GPU_PRICE_PER_SECOND_USD = Decimal(os.getenv("GPU_PRICE_PER_SECOND_USD", "0.0002"))
     GPU_RESERVED_COST_USD = Decimal(os.getenv("GPU_RESERVED_COST_USD", "0.012"))

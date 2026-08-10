@@ -535,7 +535,7 @@
         {% if current_user %}
           {{ current_user.display_name or current_user.email }} · GPU {{ gpu_quota.daily }}/day, {{ gpu_quota.monthly }}/month
           <form action="/logout" method="post" style="display:inline">
-            <input type="hidden" name="csrf_token" value="{{ logout_csrf_token }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit">Sign out</button>
           </form>
         {% elif google_login_enabled %}
@@ -573,7 +573,9 @@
 
         <div class="content-grid">
           <form class="analysis-form" action="/analyze" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="dataset_id" value="{{ dataset_id }}">
+            {% set bootstrap_value = selected_bootstrap_iterations|default(500, true)|int %}
 
             <div class="field-group">
               <label for="research_question">Research question</label>
@@ -639,12 +641,34 @@
                 id="bootstrap_iterations"
                 name="bootstrap_iterations"
                 type="number"
-                min="100"
+                min="{{ config.MIN_BOOTSTRAP_ITERATIONS }}"
+                max="{{ config.MAX_BOOTSTRAP_ITERATIONS }}"
                 step="100"
-                value="{{ selected_bootstrap_iterations|default(500, true) }}"
+                value="{{ bootstrap_value }}"
+                aria-controls="gpu-opt-in-panel"
               >
-              <p class="hint">Eligible large jobs use cloud GPU automatically when you are signed in and quota is available.</p>
+              <p class="hint">GPU eligibility is based on the measured workload threshold of {{ "{:,}".format(gpu_min_work_units) }} work units.</p>
             </div>
+
+            <fieldset
+              id="gpu-opt-in-panel"
+              {% if bootstrap_value <= gpu_opt_in_iteration_threshold %}hidden{% endif %}
+            >
+              <legend>Cloud GPU</legend>
+              <label class="control-option" for="use_gpu">
+                <input
+                  id="use_gpu"
+                  type="checkbox"
+                  name="use_gpu"
+                  {% if selected_gpu_opt_in|default(false) %}checked{% endif %}
+                  {% if bootstrap_value <= gpu_opt_in_iteration_threshold %}disabled{% endif %}
+                >
+                <span>Allow this analysis to use cloud GPU computing</span>
+              </label>
+              <p class="hint">
+                Required above {{ gpu_opt_in_iteration_threshold }} iterations. The GPU is used only when the prepared workload qualifies, you are signed in, and quota is available.
+              </p>
+            </fieldset>
 
             <div class="actions">
               <div class="flow">Upload -&gt; Configure -&gt; Analyze -&gt; Results</div>
@@ -696,6 +720,23 @@
   <script>
     const analysisForm = document.querySelector(".analysis-form");
     const runAnalysisButton = document.querySelector("#run-analysis-button");
+    const bootstrapIterations = document.querySelector("#bootstrap_iterations");
+    const gpuOptInPanel = document.querySelector("#gpu-opt-in-panel");
+    const gpuOptInCheckbox = document.querySelector("#use_gpu");
+    const gpuOptInThreshold = {{ gpu_opt_in_iteration_threshold|tojson }};
+
+    function syncGpuOptIn() {
+      const iterations = Number.parseInt(bootstrapIterations.value, 10);
+      const requiresConsent = Number.isFinite(iterations) && iterations > gpuOptInThreshold;
+      gpuOptInPanel.hidden = !requiresConsent;
+      gpuOptInCheckbox.disabled = !requiresConsent;
+      if (!requiresConsent) {
+        gpuOptInCheckbox.checked = false;
+      }
+    }
+
+    bootstrapIterations.addEventListener("input", syncGpuOptIn);
+    syncGpuOptIn();
 
     analysisForm.addEventListener("submit", () => {
       if (!analysisForm.checkValidity()) {

@@ -1,8 +1,5 @@
 """Optional Google OpenID Connect helpers."""
 
-import hmac
-import secrets
-
 from flask import session
 
 
@@ -28,16 +25,3 @@ def configure_google_oauth(app):
 def current_user():
     user = session.get("user")
     return user if isinstance(user, dict) else None
-
-
-def logout_csrf_token():
-    token = session.get("logout_csrf_token")
-    if token is None:
-        token = secrets.token_urlsafe(32)
-        session["logout_csrf_token"] = token
-    return token
-
-
-def validate_logout_csrf(token):
-    expected = session.get("logout_csrf_token")
-    return bool(expected and token and hmac.compare_digest(expected, token))

@@ -1,4 +1,9 @@
 import os
+from functools import wraps
+from threading import Lock
+from time import monotonic
+
+import click
 import pandas as pd
 from dotenv import load_dotenv
 from flask import (
@@ -11,6 +16,10 @@ from flask import (
     session,
     url_for,
 )
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_wtf.csrf import CSRFError, CSRFProtect
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 load_dotenv()
 
@@ -22,14 +31,14 @@ from regressionlab.services.charts_and_plots import (
 )
 from regressionlab.services.regression import clean_metric
 from regressionlab.services.data_processing import (
+    CSVValidationError,
     parse_columns,
     prepare_analysis_data,
+    validate_csv_shape,
 )
 from regressionlab.services.auth_service import (
     configure_google_oauth,
     current_user,
-    logout_csrf_token,
-    validate_logout_csrf,
 )
 from regressionlab.services.compute_router import (
     ComputeUnavailableError,
@@ -44,6 +53,7 @@ from regressionlab.services.gpu_usage import (
 from regressionlab.services.dataset_service import (
     DatasetError,
     DatasetNotFoundError,
+    cleanup_expired_datasets,
     delete_dataset,
     load_dataset,
     store_existing_dataset,
@@ -64,12 +74,69 @@ from regressionlab.services.export_report import (
     ensure_report_artifacts,
     build_latex_zip,
     compile_pdf_report,
+    cleanup_expired_exports,
 )
 
 
 app = Flask(__name__)
 app.config.from_object(Config)
+
+
+def validate_production_configuration(flask_app):
+    """Fail closed instead of starting with insecure production defaults."""
+    if not flask_app.config.get("IS_PRODUCTION"):
+        return
+
+    problems = []
+    if not os.getenv("FLASK_SECRET_KEY"):
+        problems.append("FLASK_SECRET_KEY must be set")
+    if not os.getenv("DATA_ROOT"):
+        problems.append("DATA_ROOT must point to persistent storage")
+    if not flask_app.config.get("SESSION_COOKIE_SECURE"):
+        problems.append("SESSION_COOKIE_SECURE must be true")
+    if not flask_app.config.get("PROXY_FIX_ENABLED"):
+        problems.append("PROXY_FIX_ENABLED must be true behind the host proxy")
+    if not flask_app.config.get("TRUSTED_HOSTS"):
+        problems.append("TRUSTED_HOSTS must list the public hostname")
+    if flask_app.config.get("AUTH_REQUIRED") and not (
+        flask_app.config.get("GOOGLE_CLIENT_ID")
+        and flask_app.config.get("GOOGLE_CLIENT_SECRET")
+    ):
+        problems.append(
+            "Google OAuth credentials are required when AUTH_REQUIRED is true"
+        )
+    if problems:
+        raise RuntimeError(
+            "Unsafe production configuration: " + "; ".join(problems)
+        )
+
+
+validate_production_configuration(app)
+if app.config["PROXY_FIX_ENABLED"]:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+for data_folder in (
+    app.config["UPLOAD_FOLDER"],
+    app.config["REPORTS_FOLDER"],
+    app.config["INSTANCE_FOLDER"],
+):
+    data_folder.mkdir(parents=True, exist_ok=True)
+
 app.logger.setLevel(app.config["LOG_LEVEL"])
+csrf = CSRFProtect(app)
+
+
+def request_identity():
+    user = current_user()
+    return f"user:{user['id']}" if user else get_remote_address()
+
+
+limiter = Limiter(
+    request_identity,
+    app=app,
+    storage_uri=app.config["RATELIMIT_STORAGE_URI"],
+    default_limits=[],
+)
 app.extensions["openai_client"] = create_openai_client(
     api_key=app.config.get("OPENAI_API_KEY"),
     timeout_seconds=app.config["OPENAI_TIMEOUT_SECONDS"],
@@ -85,6 +152,89 @@ app.extensions["runpod_client"] = RunPodClient(
     logger=app.logger,
 )
 app.extensions["google_oauth"] = configure_google_oauth(app)
+app.extensions["artifact_cleanup_lock"] = Lock()
+app.extensions["last_artifact_cleanup"] = 0.0
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if app.testing or not app.config["AUTH_REQUIRED"] or current_user():
+            return view(*args, **kwargs)
+        if app.extensions.get("google_oauth") is None:
+            abort(503, description="Sign-in is required but is not configured.")
+        return redirect(url_for("login"))
+
+    return wrapped
+
+
+def artifact_access():
+    user = current_user()
+    return (
+        (user or {}).get("id"),
+        bool(app.config["AUTH_REQUIRED"]),
+    )
+
+
+def run_artifact_cleanup():
+    removed_datasets = cleanup_expired_datasets(
+        app.config["UPLOAD_FOLDER"],
+        app.config["DATA_RETENTION_HOURS"],
+    )
+    removed_exports = cleanup_expired_exports(
+        app.config["REPORTS_FOLDER"],
+        app.config["DATA_RETENTION_HOURS"],
+    )
+    if removed_datasets or removed_exports:
+        app.logger.info(
+            "Artifact cleanup removed_datasets=%s removed_exports=%s",
+            removed_datasets,
+            removed_exports,
+        )
+    return removed_datasets, removed_exports
+
+
+@app.before_request
+def cleanup_stale_artifacts_periodically():
+    if app.testing or request.endpoint in {"static", "healthz"}:
+        return None
+    interval = app.config["CLEANUP_INTERVAL_SECONDS"]
+    if monotonic() - app.extensions["last_artifact_cleanup"] < interval:
+        return None
+    lock = app.extensions["artifact_cleanup_lock"]
+    if not lock.acquire(blocking=False):
+        return None
+    try:
+        app.extensions["last_artifact_cleanup"] = monotonic()
+        run_artifact_cleanup()
+    except Exception as error:
+        app.logger.warning(
+            "Artifact cleanup failed error_type=%s", type(error).__name__
+        )
+    finally:
+        lock.release()
+    return None
+
+
+@app.after_request
+def set_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.plot.ly; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "connect-src 'self'; object-src 'none'; base-uri 'self'; "
+        "frame-ancestors 'none'; form-action 'self'",
+    )
+    if request.is_secure:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    if request.endpoint not in {"static", "healthz"}:
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 
 @app.context_processor
@@ -102,7 +252,9 @@ def inject_account_context():
         "current_user": user,
         "gpu_quota": quota,
         "google_login_enabled": app.extensions.get("google_oauth") is not None,
-        "logout_csrf_token": logout_csrf_token(),
+        "auth_required": app.config["AUTH_REQUIRED"],
+        "max_upload_megabytes": app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024),
+        "data_retention_hours": app.config["DATA_RETENTION_HOURS"],
     }
 
 
@@ -122,7 +274,14 @@ def start():
     return render_template("index.html")
 
 
+@app.route("/healthz")
+@limiter.exempt
+def healthz():
+    return {"status": "ok"}, 200
+
+
 @app.route("/login")
+@limiter.limit(lambda: app.config["LOGIN_RATE_LIMIT"], exempt_when=lambda: app.testing)
 def login():
     google = app.extensions.get("google_oauth")
     if google is None:
@@ -131,6 +290,7 @@ def login():
 
 
 @app.route("/auth/google/callback")
+@limiter.limit(lambda: app.config["LOGIN_RATE_LIMIT"], exempt_when=lambda: app.testing)
 def google_callback():
     google = app.extensions.get("google_oauth")
     if google is None:
@@ -149,12 +309,12 @@ def google_callback():
 
 @app.route("/logout", methods=["POST"])
 def logout():
-    if not validate_logout_csrf(request.form.get("csrf_token")):
-        abort(400, description="Invalid logout request.")
     session.clear()
     return redirect(url_for("start"))
 
 @app.route("/upload", methods=["POST"])
+@login_required
+@limiter.limit(lambda: app.config["UPLOAD_RATE_LIMIT"], exempt_when=lambda: app.testing)
 def upload():
     '''Handles user CSV upload'''
     uploaded_file = request.files.get("csv_file")
@@ -166,9 +326,20 @@ def upload():
         dataset = store_uploaded_dataset(
             uploaded_file,
             upload_folder=app.config["UPLOAD_FOLDER"],
+            owner_id=(current_user() or {}).get("id"),
+        )
+        validate_csv_shape(
+            dataset.storage_path,
+            max_rows=app.config["MAX_CSV_ROWS"],
+            max_columns=app.config["MAX_CSV_COLUMNS"],
         )
         parse_columns(dataset.storage_path)
-    except DatasetError as error:
+    except (DatasetError, CSVValidationError) as error:
+        if "dataset" in locals():
+            delete_dataset(
+                dataset.dataset_id,
+                upload_folder=app.config["UPLOAD_FOLDER"],
+            )
         return str(error), 400
     except (
         UnicodeDecodeError,
@@ -188,11 +359,15 @@ def upload():
 
 
 @app.route("/configure/<dataset_id>")
+@login_required
 def configure_dataset(dataset_id):
+    owner_id, enforce_owner = artifact_access()
     try:
         dataset = load_dataset(
             dataset_id,
             upload_folder=app.config["UPLOAD_FOLDER"],
+            owner_id=owner_id,
+            enforce_owner=enforce_owner,
         )
     except DatasetNotFoundError as error:
         abort(404, description=str(error))
@@ -202,9 +377,15 @@ def configure_dataset(dataset_id):
         dataset_id=dataset.dataset_id,
         filename=dataset.original_filename,
         columns=parse_columns(dataset.storage_path),
+        gpu_opt_in_iteration_threshold=app.config[
+            "GPU_OPT_IN_ITERATION_THRESHOLD"
+        ],
+        gpu_min_work_units=app.config["GPU_MIN_WORK_UNITS"],
     )
 
-@app.route("/sample/wage-education")
+@app.route("/sample/wage-education", methods=["POST"])
+@login_required
+@limiter.limit(lambda: app.config["UPLOAD_RATE_LIMIT"], exempt_when=lambda: app.testing)
 def sample_wage_education():
     '''Load the bundled wage/education sample dataset.'''
     sample_path = os.path.join(
@@ -217,6 +398,7 @@ def sample_wage_education():
             sample_path,
             upload_folder=app.config["UPLOAD_FOLDER"],
             original_filename=SAMPLE_DATASET_FILENAME,
+            owner_id=(current_user() or {}).get("id"),
         )
     except DatasetNotFoundError as error:
         abort(404, description=str(error))
@@ -227,6 +409,8 @@ def sample_wage_education():
 
 
 @app.route("/analyze", methods=["POST"])
+@login_required
+@limiter.limit(lambda: app.config["ANALYSIS_RATE_LIMIT"], exempt_when=lambda: app.testing)
 def analyze():
     dataset_id = request.form.get("dataset_id")
     research_question = request.form.get("research_question")
@@ -234,17 +418,20 @@ def analyze():
     main_independent_variable = request.form.get("main_independent_variable")
     controls = request.form.getlist("controls")
     bootstrap_iterations = request.form.get("bootstrap_iterations")
+    gpu_opt_in_requested = request.form.get("use_gpu") == "on"
 
+    owner_id, enforce_owner = artifact_access()
     try:
         dataset = load_dataset(
             dataset_id,
             upload_folder=app.config["UPLOAD_FOLDER"],
+            owner_id=owner_id,
+            enforce_owner=enforce_owner,
         )
     except DatasetNotFoundError as error:
         abort(404, description=str(error))
 
     csv_path = dataset.storage_path
-    df = pd.read_csv(csv_path)
 
     def render_configuration_error(message):
         return (
@@ -261,6 +448,11 @@ def analyze():
                 ),
                 selected_controls=controls,
                 selected_bootstrap_iterations=bootstrap_iterations,
+                selected_gpu_opt_in=gpu_opt_in_requested,
+                gpu_opt_in_iteration_threshold=app.config[
+                    "GPU_OPT_IN_ITERATION_THRESHOLD"
+                ],
+                gpu_min_work_units=app.config["GPU_MIN_WORK_UNITS"],
             ),
             400,
         )
@@ -271,6 +463,37 @@ def analyze():
         return render_configuration_error(
             "Bootstrap iterations must be a whole number."
         )
+
+    research_question = (research_question or "").strip()
+    if not research_question:
+        return render_configuration_error("A research question is required.")
+    if len(research_question) > app.config["MAX_RESEARCH_QUESTION_LENGTH"]:
+        return render_configuration_error(
+            "The research question is too long. Keep it under "
+            f"{app.config['MAX_RESEARCH_QUESTION_LENGTH']:,} characters."
+        )
+    if not (
+        app.config["MIN_BOOTSTRAP_ITERATIONS"]
+        <= bootstrap_iterations
+        <= app.config["MAX_BOOTSTRAP_ITERATIONS"]
+    ):
+        return render_configuration_error(
+            "Bootstrap iterations must be between "
+            f"{app.config['MIN_BOOTSTRAP_ITERATIONS']:,} and "
+            f"{app.config['MAX_BOOTSTRAP_ITERATIONS']:,}."
+        )
+
+    try:
+        df = pd.read_csv(csv_path)
+    except (UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError):
+        return render_configuration_error(
+            "The stored dataset could not be read. Upload it again."
+        )
+
+    gpu_opt_in = (
+        bootstrap_iterations > app.config["GPU_OPT_IN_ITERATION_THRESHOLD"]
+        and gpu_opt_in_requested
+    )
 
     try:
         prepared_data = prepare_analysis_data(
@@ -290,6 +513,7 @@ def analyze():
             gpu_client=app.extensions.get("runpod_client"),
             user_id=(current_user() or {}).get("id"),
             logger=app.logger,
+            gpu_opt_in=gpu_opt_in,
         )
         model_results = compute_result.model_results
         bootstrap_results = compute_result.bootstrap_results
@@ -353,6 +577,7 @@ def analyze():
     export_token = store_export_payload(
         export_payload,
         reports_folder=app.config["REPORTS_FOLDER"],
+        owner_id=owner_id,
     )
 
     return render_template(
@@ -379,11 +604,16 @@ def analyze():
 
 
 @app.route("/export/latex/<export_token>")
+@login_required
+@limiter.limit(lambda: app.config["EXPORT_RATE_LIMIT"], exempt_when=lambda: app.testing)
 def export_latex(export_token):
+    owner_id, enforce_owner = artifact_access()
     try:
         report_dir, tex_path = ensure_report_artifacts(
             export_token,
             reports_folder=app.config["REPORTS_FOLDER"],
+            owner_id=owner_id,
+            enforce_owner=enforce_owner,
         )
         zip_path = build_latex_zip(report_dir, tex_path)
     except ExportNotFoundError as error:
@@ -399,11 +629,16 @@ def export_latex(export_token):
     )
 
 @app.route("/export/pdf/<export_token>")
+@login_required
+@limiter.limit(lambda: app.config["EXPORT_RATE_LIMIT"], exempt_when=lambda: app.testing)
 def export_pdf(export_token):
+    owner_id, enforce_owner = artifact_access()
     try:
         report_dir, tex_path = ensure_report_artifacts(
             export_token,
             reports_folder=app.config["REPORTS_FOLDER"],
+            owner_id=owner_id,
+            enforce_owner=enforce_owner,
         )
         pdf_path = compile_pdf_report(report_dir, tex_path)
     except ExportNotFoundError as error:
@@ -417,3 +652,64 @@ def export_pdf(export_token):
         download_name="regressai_report.pdf",
         mimetype="application/pdf",
     )
+
+
+@app.cli.command("cleanup-artifacts")
+def cleanup_artifacts_command():
+    """Delete datasets and reports outside the retention window."""
+    datasets, exports = run_artifact_cleanup()
+    click.echo(f"Removed {datasets} datasets and {exports} exports.")
+
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(error):
+    return render_template(
+        "error.html",
+        status_code=400,
+        title="Request expired",
+        message="Refresh the page and try again.",
+    ), 400
+
+
+@app.errorhandler(413)
+def handle_upload_too_large(error):
+    return render_template(
+        "error.html",
+        status_code=413,
+        title="Upload too large",
+        message=(
+            f"CSV files must be no larger than "
+            f"{app.config['MAX_CONTENT_LENGTH'] // (1024 * 1024)} MB."
+        ),
+    ), 413
+
+
+@app.errorhandler(429)
+def handle_rate_limit(error):
+    return render_template(
+        "error.html",
+        status_code=429,
+        title="Too many requests",
+        message="Please wait before trying again.",
+    ), 429
+
+
+@app.errorhandler(404)
+def handle_not_found(error):
+    return render_template(
+        "error.html",
+        status_code=404,
+        title="Not found",
+        message=getattr(error, "description", "The requested page was not found."),
+    ), 404
+
+
+@app.errorhandler(500)
+def handle_internal_error(error):
+    app.logger.error("Unhandled application error error_type=%s", type(error).__name__)
+    return render_template(
+        "error.html",
+        status_code=500,
+        title="Something went wrong",
+        message="The request could not be completed. Please try again.",
+    ), 500

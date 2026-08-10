@@ -51,6 +51,7 @@ build/
 __pycache__/
 .pytest_cache/
 tests/.pytest-tmp-*/
+tests/.pytest-cache/
 *.pyc
 *.pyo
 *.pyd
@@ -60,6 +61,7 @@ tests/.pytest-tmp-*/
 venv/
 env/
 /instance/
+/data/
 
 # Ignore package manager files
 node_modules/

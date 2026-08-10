@@ -1,7 +1,8 @@
 # Handles LaTeX report generation and exporting.
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
+import shutil
 import zipfile
 import subprocess
 import matplotlib
@@ -60,7 +61,7 @@ def build_export_payload(
         "runtime_seconds": runtime_seconds,
     }
 
-def store_export_payload(export_payload, reports_folder):
+def store_export_payload(export_payload, reports_folder, owner_id=None):
     '''Store the current analysis payload for export downloads.'''
     reports_folder = Path(reports_folder)
     export_token = uuid.uuid4().hex
@@ -68,8 +69,10 @@ def store_export_payload(export_payload, reports_folder):
     payload_dir.mkdir(parents=True, exist_ok=True)
 
     payload_path = payload_dir / f"{export_token}.json"
+    stored_payload = dict(export_payload)
+    stored_payload["owner_id"] = owner_id
     with payload_path.open("w", encoding="utf-8") as file:
-        json.dump(export_payload, file, indent=2)
+        json.dump(stored_payload, file, indent=2)
 
     return export_token
 
@@ -77,7 +80,12 @@ def validate_export_token(export_token):
     if not re.fullmatch(r"[0-9a-f]{32}", export_token or ""):
         raise ExportNotFoundError("Invalid export token.")
 
-def load_export_payload(export_token, reports_folder):
+def load_export_payload(
+    export_token,
+    reports_folder,
+    owner_id=None,
+    enforce_owner=False,
+):
     validate_export_token(export_token)
     payload_path = (
         Path(reports_folder)
@@ -89,7 +97,17 @@ def load_export_payload(export_token, reports_folder):
         raise ExportNotFoundError("Export payload not found.")
 
     with payload_path.open("r", encoding="utf-8") as file:
-        return json.load(file)
+        payload = json.load(file)
+
+    stored_owner_id = payload.get("owner_id")
+    if stored_owner_id is not None:
+        try:
+            stored_owner_id = int(stored_owner_id)
+        except (TypeError, ValueError) as error:
+            raise ExportNotFoundError("Export payload is invalid.") from error
+    if enforce_owner and stored_owner_id != owner_id:
+        raise ExportNotFoundError("Export payload not found.")
+    return payload
 
 def report_dir_for_token(export_token, reports_folder):
     validate_export_token(export_token)
@@ -276,8 +294,18 @@ Model & Formula & Coef. & SE & T & P & 95\% CI & R-sq & Adj. R-sq & RMSE & F & F
 \end{{document}}
 """
 
-def ensure_report_artifacts(export_token, reports_folder):
-    payload = load_export_payload(export_token, reports_folder)
+def ensure_report_artifacts(
+    export_token,
+    reports_folder,
+    owner_id=None,
+    enforce_owner=False,
+):
+    payload = load_export_payload(
+        export_token,
+        reports_folder,
+        owner_id=owner_id,
+        enforce_owner=enforce_owner,
+    )
     report_dir = report_dir_for_token(export_token, reports_folder)
 
     try:
@@ -310,7 +338,6 @@ def compile_pdf_report(report_dir, tex_path):
         result = subprocess.run(
             [
                 "pdflatex",
-                "-enable-installer",
                 "-interaction=nonstopmode",
                 "-halt-on-error",
                 tex_path.name,
@@ -342,3 +369,48 @@ def compile_pdf_report(report_dir, tex_path):
         )
 
     return pdf_path
+
+
+def cleanup_expired_exports(
+    reports_folder,
+    max_age_hours,
+    now=None,
+):
+    """Delete expired export payloads and their generated report folders."""
+    if max_age_hours <= 0:
+        return 0
+
+    reports_root = Path(reports_folder).resolve()
+    payload_dir = (reports_root / "export_payloads").resolve()
+    if not payload_dir.exists() or payload_dir.parent != reports_root:
+        return 0
+
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(
+        hours=max_age_hours
+    )
+    removed = 0
+    for payload_path in payload_dir.glob("*.json"):
+        export_token = payload_path.stem
+        if not re.fullmatch(r"[0-9a-f]{32}", export_token):
+            continue
+        try:
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
+            created_at = datetime.fromisoformat(payload["created_at"])
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            created_at = datetime.fromtimestamp(
+                payload_path.stat().st_mtime,
+                tz=timezone.utc,
+            )
+
+        if created_at >= cutoff:
+            continue
+
+        report_dir = (reports_root / export_token).resolve()
+        if report_dir.parent == reports_root and report_dir.is_dir():
+            shutil.rmtree(report_dir)
+        payload_path.unlink(missing_ok=True)
+        removed += 1
+
+    return removed

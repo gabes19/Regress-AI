@@ -17,9 +17,11 @@ from time import perf_counter
 
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+load_dotenv(PROJECT_ROOT / ".env")
 
 from config import Config
 from regressionlab.services.bootstrap_cpu import bootstrap_coefficient
@@ -43,6 +45,53 @@ PROFILES = [
     ("Large B", 50_000, 10, 5_000, 3),
     ("Extra large", 100_000, 10, 10_000, 3),
 ]
+PROFILE_NAMES = tuple(profile[0] for profile in PROFILES)
+
+
+def select_profiles(requested_names):
+    """Return requested profiles in canonical campaign order."""
+    if not requested_names:
+        return list(PROFILES)
+    unknown = sorted(set(requested_names) - set(PROFILE_NAMES))
+    if unknown:
+        raise ValueError(f"Unknown benchmark profile(s): {', '.join(unknown)}")
+    requested = set(requested_names)
+    return [profile for profile in PROFILES if profile[0] in requested]
+
+
+def save_checkpoint(output_dir, raw_records, completed_profiles, campaign_cost):
+    """Atomically persist resumable state without credentials or analysis payloads."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = output_dir / "checkpoint.json"
+    temporary_path = output_dir / "checkpoint.json.tmp"
+    completed = set(completed_profiles)
+    document = {
+        "schema_version": 1,
+        "campaign_cost_usd": str(campaign_cost),
+        "completed_profiles": [name for name in PROFILE_NAMES if name in completed],
+        "raw_runs": raw_records,
+    }
+    temporary_path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+    temporary_path.replace(checkpoint_path)
+
+
+def load_checkpoint(output_dir):
+    checkpoint_path = output_dir / "checkpoint.json"
+    if not checkpoint_path.exists():
+        raise ValueError(f"Benchmark checkpoint does not exist: {checkpoint_path}")
+    document = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    if document.get("schema_version") != 1:
+        raise ValueError("Unsupported benchmark checkpoint schema version.")
+    completed_profiles = set(document.get("completed_profiles", []))
+    if completed_profiles - set(PROFILE_NAMES):
+        raise ValueError("Benchmark checkpoint contains unknown profiles.")
+    campaign_cost = Decimal(document.get("campaign_cost_usd", "0"))
+    if campaign_cost < 0:
+        raise ValueError("Benchmark checkpoint contains a negative campaign cost.")
+    raw_records = document.get("raw_runs", [])
+    if not isinstance(raw_records, list):
+        raise ValueError("Benchmark checkpoint raw_runs must be a list.")
+    return raw_records, completed_profiles, campaign_cost
 
 
 def percentile(values, percentile_value):
@@ -70,9 +119,14 @@ def synthetic_data(rows, predictor_count, seed=20260809):
 
 
 def explicit_indices(rows, iterations, seed=42):
-    if rows * iterations > 2_000_000:
+    if not uses_explicit_indices(rows, iterations):
         return None
     return np.random.default_rng(seed).integers(0, rows, size=(iterations, rows)).tolist()
+
+
+def uses_explicit_indices(rows, iterations):
+    """Exact parity payloads are intentionally limited and are not production-like."""
+    return rows * iterations <= 2_000_000
 
 
 def run_cpu(prepared, controls, iterations, indices):
@@ -152,16 +206,42 @@ def aggregate(profile, records):
         "median_gpu_cost_usd": str(statistics.median(execution_costs)),
         "cost_per_1000_bootstraps_usd": str(statistics.median(execution_costs) * Decimal(1000) / Decimal(profile[3])),
         "parity_passed": all(record["parity_passed"] for record in records),
+        "routing_eligible": not uses_explicit_indices(profile[1], profile[3]),
     }
+
+
+def aggregate_completed_profiles(raw_records, completed_profiles):
+    results = []
+    for profile in PROFILES:
+        name = profile[0]
+        if name not in completed_profiles:
+            continue
+        records = [record for record in raw_records if record["profile"] == name]
+        results.append(aggregate(profile, records))
+    return results
+
+
+def recommend_gpu_min_work_units(results):
+    eligible = [
+        item for item in results
+        if item["routing_eligible"]
+        and item["parity_passed"]
+        and item["end_to_end_speedup"] >= 1.25
+    ]
+    return min(
+        (
+            item["rows"]
+            * (item["predictors"] + 1)
+            * item["bootstrap_iterations"]
+            for item in eligible
+        ),
+        default=None,
+    )
 
 
 def write_results(results, raw_records, output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
-    eligible = [item for item in results if item["parity_passed"] and item["end_to_end_speedup"] >= 1.25]
-    recommendation = min(
-        (item["rows"] * (item["predictors"] + 1) * item["bootstrap_iterations"] for item in eligible),
-        default=None,
-    )
+    recommendation = recommend_gpu_min_work_units(results)
     document = {"pricing_usd_per_second": "0.0002", "recommended_gpu_min_work_units": recommendation, "profiles": results, "raw_runs": raw_records}
     (output_dir / "results.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
     with (output_dir / "results.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -179,8 +259,8 @@ def update_readme_table(results):
     if start_marker not in text or end_marker not in text:
         raise ValueError("README benchmark markers are missing.")
     rows = [
-        "| Workload | CPU median | GPU compute median | GPU warm/cold E2E | Compute speedup | E2E speedup | GPU cost | Parity |",
-        "|---|---:|---:|---:|---:|---:|---:|---|",
+        "| Workload | CPU median | GPU compute median | GPU warm/cold E2E | Compute speedup | E2E speedup | GPU cost | Parity | Routing evidence |",
+        "|---|---:|---:|---:|---:|---:|---:|---|---|",
     ]
     for item in results:
         cold = item["gpu_cold_e2e_seconds"]
@@ -191,7 +271,8 @@ def update_readme_table(results):
             f"{item['gpu_warm_e2e_median_seconds']:.3f}s / {cold_text} | "
             f"{item['compute_speedup']:.2f}× | {item['end_to_end_speedup']:.2f}× "
             f"({item['comparison']}) | ${item['median_gpu_cost_usd']} | "
-            f"{'pass' if item['parity_passed'] else 'FAIL'} |"
+            f"{'pass' if item['parity_passed'] else 'FAIL'} | "
+            f"{'eligible' if item['routing_eligible'] else 'parity-only'} |"
         )
     replacement = start_marker + "\n" + "\n".join(rows) + "\n" + end_marker
     before, remainder = text.split(start_marker, 1)
@@ -203,9 +284,21 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--confirm-live-run", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "benchmarks")
+    parser.add_argument(
+        "--profile",
+        action="append",
+        choices=PROFILE_NAMES,
+        help="Run only this profile; repeat this option to select multiple profiles.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Continue from output-dir/checkpoint.json.",
+    )
     args = parser.parse_args()
+    selected_profiles = select_profiles(args.profile)
     print("profile,rows,predictors,iterations,repetitions")
-    for profile in PROFILES:
+    for profile in selected_profiles:
         print(",".join(map(str, profile)))
     if not args.confirm_live_run:
         print("Dry run only. Add --confirm-live-run to submit billable RunPod jobs.")
@@ -219,12 +312,25 @@ def main():
         raise SystemExit("RUNPOD_ENABLED=true, RUNPOD_ENDPOINT_ID, and RUNPOD_API_KEY are required.")
 
     initialize_gpu_database(Config.GPU_USAGE_DATABASE)
-    raw_records = []
-    aggregates = []
-    campaign_cost = Decimal("0")
-    first_request = True
-    for profile in PROFILES:
+    if args.resume:
+        try:
+            raw_records, completed_profiles, campaign_cost = load_checkpoint(args.output_dir)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+        print(
+            f"Resuming {len(completed_profiles)} completed profile(s); "
+            f"recorded campaign cost ${campaign_cost}."
+        )
+    else:
+        raw_records = []
+        completed_profiles = set()
+        campaign_cost = Decimal("0")
+    first_request = not any(record.get("cold") for record in raw_records)
+    for profile in selected_profiles:
         name, rows, predictors, iterations, repetitions = profile
+        if name in completed_profiles:
+            print(f"Skipping completed profile: {name}")
+            continue
         prepared, controls = synthetic_data(rows, predictors)
         indices = explicit_indices(rows, iterations)
         request_data = build_gpu_request(prepared, "p0", controls, iterations, bootstrap_indices=indices)
@@ -247,7 +353,16 @@ def main():
         if first_request:
             raw_records.append(cold_record)
         first_request = False
+        save_checkpoint(args.output_dir, raw_records, completed_profiles, campaign_cost)
+        completed_repetitions = {
+            int(record["repetition"])
+            for record in raw_records
+            if record["profile"] == name and not record["cold"]
+        }
         for repetition in range(1, repetitions + 1):
+            if repetition in completed_repetitions:
+                print(f"Skipping completed measurement: {name} repetition {repetition}")
+                continue
             if campaign_cost + Config.GPU_RESERVED_COST_USD > Config.BENCHMARK_CAMPAIGN_BUDGET_USD:
                 raise SystemExit("Benchmark campaign budget would be exceeded.")
             cpu_seconds, cpu_models, cpu_bootstrap = run_cpu(prepared, controls, iterations, indices)
@@ -263,8 +378,15 @@ def main():
                 "gpu_name": gpu_result.output.gpu_name, "gpu_cost_usd": str(cost),
                 "parity_passed": parity_ok(cpu_models, cpu_bootstrap, gpu_result.output, indices is not None),
             })
-        aggregates.append(aggregate(profile, [record for record in raw_records if record["profile"] == name]))
-    write_results(aggregates, raw_records, args.output_dir)
+            save_checkpoint(args.output_dir, raw_records, completed_profiles, campaign_cost)
+        completed_profiles.add(name)
+        save_checkpoint(args.output_dir, raw_records, completed_profiles, campaign_cost)
+        aggregates = aggregate_completed_profiles(raw_records, completed_profiles)
+        write_results(aggregates, raw_records, args.output_dir)
+        print(f"Completed profile: {name}")
+    aggregates = aggregate_completed_profiles(raw_records, completed_profiles)
+    if aggregates:
+        write_results(aggregates, raw_records, args.output_dir)
     print(f"Wrote benchmark results. Estimated GPU cost: ${campaign_cost}")
     return 0
 

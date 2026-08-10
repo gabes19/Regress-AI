@@ -436,7 +436,7 @@
         {% if current_user %}
           {{ current_user.display_name or current_user.email }} · GPU {{ gpu_quota.daily }}/day, {{ gpu_quota.monthly }}/month
           <form action="/logout" method="post" style="display:inline">
-            <input type="hidden" name="csrf_token" value="{{ logout_csrf_token }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit">Sign out</button>
           </form>
         {% elif google_login_enabled %}

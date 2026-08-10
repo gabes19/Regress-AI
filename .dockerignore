@@ -7,7 +7,6 @@ uploads
 reports
 tests
 benchmarks
-sample_data
 __pycache__
 *.pyc
 image.png

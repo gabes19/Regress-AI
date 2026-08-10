@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
@@ -31,6 +32,7 @@ class StoredDataset:
     dataset_id: str
     original_filename: str
     storage_path: Path
+    owner_id: int | None = None
 
 
 def validate_dataset_id(dataset_id: str | None) -> str:
@@ -68,10 +70,13 @@ def _write_metadata(
     metadata_path: Path,
     dataset_id: str,
     original_filename: str,
+    owner_id: int | None = None,
 ) -> None:
     metadata = {
         "dataset_id": dataset_id,
         "original_filename": original_filename,
+        "owner_id": owner_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     with metadata_path.open("w", encoding="utf-8") as metadata_file:
         json.dump(metadata, metadata_file, separators=(",", ":"))
@@ -80,6 +85,7 @@ def _write_metadata(
 def store_uploaded_dataset(
     uploaded_file: FileStorage,
     upload_folder: str | Path,
+    owner_id: int | None = None,
 ) -> StoredDataset:
     """Save an uploaded CSV under an opaque server-generated ID."""
     original_filename = _safe_original_filename(uploaded_file.filename)
@@ -93,6 +99,7 @@ def store_uploaded_dataset(
             metadata_path,
             dataset_id,
             original_filename,
+            owner_id,
         )
     except Exception:
         csv_path.unlink(missing_ok=True)
@@ -103,6 +110,7 @@ def store_uploaded_dataset(
         dataset_id=dataset_id,
         original_filename=original_filename,
         storage_path=csv_path,
+        owner_id=owner_id,
     )
 
 
@@ -110,6 +118,7 @@ def store_existing_dataset(
     source_path: str | Path,
     upload_folder: str | Path,
     original_filename: str | None = None,
+    owner_id: int | None = None,
 ) -> StoredDataset:
     """Copy a trusted bundled dataset into the ID-based upload lifecycle."""
     source = Path(source_path).resolve()
@@ -125,7 +134,7 @@ def store_existing_dataset(
 
     try:
         shutil.copyfile(source, csv_path)
-        _write_metadata(metadata_path, dataset_id, display_name)
+        _write_metadata(metadata_path, dataset_id, display_name, owner_id)
     except Exception:
         csv_path.unlink(missing_ok=True)
         metadata_path.unlink(missing_ok=True)
@@ -135,12 +144,15 @@ def store_existing_dataset(
         dataset_id=dataset_id,
         original_filename=display_name,
         storage_path=csv_path,
+        owner_id=owner_id,
     )
 
 
 def load_dataset(
     dataset_id: str | None,
     upload_folder: str | Path,
+    owner_id: int | None = None,
+    enforce_owner: bool = False,
 ) -> StoredDataset:
     """Resolve a dataset ID to a trusted path and display filename."""
     trusted_id = validate_dataset_id(dataset_id)
@@ -161,10 +173,22 @@ def load_dataset(
     if metadata.get("dataset_id") != trusted_id:
         raise DatasetNotFoundError("Dataset metadata is invalid.")
 
+    stored_owner_id = metadata.get("owner_id")
+    if stored_owner_id is not None:
+        try:
+            stored_owner_id = int(stored_owner_id)
+        except (TypeError, ValueError) as error:
+            raise DatasetNotFoundError("Dataset metadata is invalid.") from error
+
+    if enforce_owner and stored_owner_id != owner_id:
+        # Do not reveal whether a dataset exists for another account.
+        raise DatasetNotFoundError("Dataset not found.")
+
     return StoredDataset(
         dataset_id=trusted_id,
         original_filename=original_filename,
         storage_path=csv_path,
+        owner_id=stored_owner_id,
     )
 
 
@@ -176,3 +200,46 @@ def delete_dataset(
     csv_path, metadata_path = _dataset_paths(dataset_id, upload_folder)
     csv_path.unlink(missing_ok=True)
     metadata_path.unlink(missing_ok=True)
+
+
+def cleanup_expired_datasets(
+    upload_folder: str | Path,
+    max_age_hours: int,
+    now: datetime | None = None,
+) -> int:
+    """Delete dataset pairs older than the configured retention window."""
+    if max_age_hours <= 0:
+        return 0
+
+    upload_root = Path(upload_folder).resolve()
+    if not upload_root.exists():
+        return 0
+
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(
+        hours=max_age_hours
+    )
+    removed = 0
+    for metadata_path in upload_root.glob("*.json"):
+        if metadata_path.parent.resolve() != upload_root:
+            continue
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            created_at = datetime.fromisoformat(metadata["created_at"])
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            created_at = datetime.fromtimestamp(
+                metadata_path.stat().st_mtime,
+                tz=timezone.utc,
+            )
+
+        if created_at >= cutoff:
+            continue
+
+        dataset_id = metadata_path.stem
+        if DATASET_ID_PATTERN.fullmatch(dataset_id):
+            (upload_root / f"{dataset_id}.csv").unlink(missing_ok=True)
+            metadata_path.unlink(missing_ok=True)
+            removed += 1
+
+    return removed

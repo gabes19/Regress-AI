@@ -28,60 +28,24 @@ Expensive bootstrap workloads can be offloaded to CUDA-enabled GPU workers throu
 
 Cloud execution is optional and disabled by default. RegressAI prepares one finite numeric matrix locally, replaces user column names with neutral identifiers, compresses it, and sends only that matrix plus the model specification to a RunPod Serverless worker. Small analyses continue to use the existing statsmodels CPU implementation.
 
-The initial worker target is an A4000 Flex worker with zero active workers and one maximum worker. Configure these environment variables in production:
+The initial worker target is an A4000 Flex worker with zero active workers and one maximum worker. 
 
-```text
-FLASK_SECRET_KEY=<long random secret>
-GOOGLE_CLIENT_ID=<google oidc client id>
-GOOGLE_CLIENT_SECRET=<google oidc client secret>
-RUNPOD_ENABLED=true
-RUNPOD_ENDPOINT_ID=<serverless endpoint id>
-RUNPOD_API_KEY=<serverless api key>
-```
-
-The default policy routes jobs at 2,000 bootstrap iterations or 10,000,000 work units, limits each account to 3 GPU runs per day and 30 per month, and enforces global budgets of $2/day and $25/month. A 60-second A4000 Flex reservation is $0.012 at the configured $0.0002/second rate. Provider credentials, payloads, variable names, research questions, and results are never written to operational logs.
-
-| Billable GPU execution | Estimated GPU cost | Including ≤$0.001 LLM allowance |
-|---:|---:|---:|
-| 5 seconds | $0.001 | ≤$0.002 |
-| 10 seconds | $0.002 | ≤$0.003 |
-| 30 seconds | $0.006 | ≤$0.007 |
-| 60 seconds | $0.012 | ≤$0.013 |
-
-At the limits above, one account's 30 full-duration monthly runs reserve at most about $0.36 of GPU execution. Flex scale-to-zero also avoids paying for a continuously active worker between jobs.
-
-Build the pinned CUDA 12.9.2 worker from the repository root, then configure the RunPod endpoint for an A4000 Flex worker with zero active workers, one maximum worker, and a 60-second execution timeout:
-
-```powershell
-docker build -f gpu_worker/Dockerfile -t regressai-runpod-worker .
-```
+The measured policy routes jobs at 60,000,000 work units. Analyses above 2,000 bootstrap iterations also require the user to explicitly enable cloud GPU computing in the configuration form; this consent does not bypass the measured workload threshold. Each account is limited to 3 GPU runs per day and 30 per month.
 
 ## CPU/GPU benchmarks
 
-Normal analyses run on exactly one compute path. CPU/GPU comparisons are administrator-only and are never duplicated inside a user request.
+Live A4500 Benchmarks:
 
-Preview the benchmark matrix without making cloud requests:
-
-```powershell
-python benchmarks/benchmark_cpu_gpu.py
-```
-
-After deploying the worker and configuring credentials, explicitly authorize the live, billable campaign:
-
-```powershell
-python benchmarks/benchmark_cpu_gpu.py --confirm-live-run
-```
-
-The harness records median and p95 CPU time, GPU worker time, cold and warm end-to-end latency, RunPod delay/execution time, numerical parity, cost, and both compute-only and end-to-end speedup. It has a separate $1 campaign cap and writes auditable results to `benchmarks/results.json` and `benchmarks/results.csv`.
-
-No live GPU benchmark has been recorded in this repository yet. The results table will be populated from those artifacts after the first controlled RunPod run:
+(Medium workloads are most similar to production data traffic)
 
 <!-- BENCHMARK_RESULTS_START -->
-| Workload | CPU median | GPU compute median | GPU warm/cold E2E | Compute speedup | E2E speedup | GPU cost | Parity |
-|---|---:|---:|---:|---:|---:|---:|---|
-| Pending live benchmark | — | — | — | — | — | — | — |
+| Workload | CPU median | GPU compute median | GPU warm/cold E2E | Compute speedup | E2E speedup | GPU cost | Parity | Routing evidence |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+| Small A | 2.904s | 0.423s | 2.255s / 3.189s | 6.86× | 1.29× (22.3% faster) | $0.0004 | pass | parity-only |
+| Small B | 3.960s | 1.578s | 6.080s / — | 2.51× | 0.65× (53.5% slower) | $0.0010 | pass | parity-only |
+| Medium A | 3.964s | 1.102s | 2.287s / — | 3.60× | 1.73× (42.3% faster) | $0.0004 | pass | eligible |
+| Medium B | 20.011s | 5.159s | 7.062s / — | 3.88× | 2.83× (64.7% faster) | $0.0012 | pass | eligible |
 <!-- BENCHMARK_RESULTS_END -->
 
-The recommended production crossover is the smallest passing workload with at least 1.25× median warm end-to-end speedup. The harness records that value as `recommended_gpu_min_work_units`; set `GPU_MIN_WORK_UNITS` to it after reviewing the raw results. If none qualifies, leave `RUNPOD_ENABLED=false`.
-
+## Results Page
 ![alt text](image.png)

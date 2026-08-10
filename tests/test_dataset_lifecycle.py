@@ -124,7 +124,7 @@ def test_sample_dataset_enters_same_id_lifecycle(
 ):
     client, _ = sample_dataset_client
 
-    response = client.get("/sample/wage-education")
+    response = client.post("/sample/wage-education")
 
     assert response.status_code == 302
     location_match = DATASET_LOCATION_PATTERN.search(response.location)

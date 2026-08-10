@@ -1,4 +1,5 @@
 import app as app_module
+import re
 
 from regressionlab.services.gpu_usage import initialize_gpu_database
 
@@ -36,10 +37,17 @@ def test_logout_requires_csrf_and_clears_session(tmp_path, monkeypatch):
     client = app_module.app.test_client()
     with client.session_transaction() as session:
         session["user"] = {"id": 1, "email": "user@example.com"}
-        session["logout_csrf_token"] = "valid-token"
 
     assert client.post("/logout", data={"csrf_token": "wrong"}).status_code == 400
-    response = client.post("/logout", data={"csrf_token": "valid-token"})
+    page = client.get("/")
+    token_match = re.search(
+        rb'name="csrf_token" value="([^"]+)"', page.data
+    )
+    assert token_match is not None
+    response = client.post(
+        "/logout",
+        data={"csrf_token": token_match.group(1).decode()},
+    )
     assert response.status_code == 302
     with client.session_transaction() as session:
         assert "user" not in session

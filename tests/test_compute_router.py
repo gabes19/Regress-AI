@@ -7,6 +7,7 @@ import app as app_module
 from regressionlab.services.compute_router import (
     ComputeUnavailableError,
     run_analysis_compute,
+    should_route_to_gpu,
 )
 from regressionlab.services.data_processing import prepare_analysis_data
 from regressionlab.services.gpu_contract import (
@@ -34,7 +35,7 @@ def config(tmp_path):
         "sub": "1", "email": "u@example.com", "email_verified": True
     })
     return {
-        "RUNPOD_ENABLED": True, "GPU_MIN_BOOTSTRAP_ITERATIONS": 2,
+        "RUNPOD_ENABLED": True, "GPU_OPT_IN_ITERATION_THRESHOLD": 2,
         "GPU_MIN_WORK_UNITS": 1, "CPU_FALLBACK_MAX_WORK_UNITS": 1_000_000,
         "GPU_MAX_ENCODED_PAYLOAD_BYTES": 15 * 1024 * 1024,
         "GPU_MAX_DECOMPRESSED_BYTES": 256 * 1024 * 1024,
@@ -89,6 +90,37 @@ def test_eligible_analysis_runs_gpu_once_without_cpu_duplication(tmp_path, monke
     assert result.compute_mode == "GPU"
 
 
+def test_measured_work_threshold_and_high_iteration_consent_both_apply():
+    data = prepared_data()
+
+    assert should_route_to_gpu(data, 2_000, 1, 2_000) is True
+    assert should_route_to_gpu(data, 2_001, 1, 2_000) is False
+    assert should_route_to_gpu(
+        data, 2_001, 1, 2_000, gpu_opt_in=True
+    ) is True
+    assert should_route_to_gpu(
+        data, 2_001, 1_000_000, 2_000, gpu_opt_in=True
+    ) is False
+
+
+def test_qualifying_high_iteration_workload_requires_explicit_gpu_consent(
+    tmp_path,
+):
+    settings, user = config(tmp_path)
+    client = FakeGPUClient()
+
+    with pytest.raises(ComputeUnavailableError, match="Enable the cloud GPU"):
+        run_analysis_compute(
+            prepared_data(), "y", "x", [], 3, settings, client, user["id"]
+        )
+
+    result = run_analysis_compute(
+        prepared_data(), "y", "x", [], 3, settings, client, user["id"],
+        gpu_opt_in=True,
+    )
+    assert result.compute_mode == "GPU"
+
+
 def test_unsigned_analysis_stays_on_cpu(tmp_path):
     settings, _ = config(tmp_path)
     client = FakeGPUClient()
@@ -130,7 +162,7 @@ def test_flask_renders_cpu_fallback_after_provider_failure(
 
     overrides = {
         "GPU_USAGE_DATABASE": database, "RUNPOD_ENABLED": True,
-        "GPU_MIN_BOOTSTRAP_ITERATIONS": 2, "GPU_MIN_WORK_UNITS": 1,
+        "GPU_OPT_IN_ITERATION_THRESHOLD": 2, "GPU_MIN_WORK_UNITS": 1,
         "CPU_FALLBACK_MAX_WORK_UNITS": 1_000_000,
     }
     for key, value in overrides.items():

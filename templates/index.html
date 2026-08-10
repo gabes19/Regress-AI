@@ -307,7 +307,7 @@
         {% if current_user %}
           {{ current_user.display_name or current_user.email }} · GPU {{ gpu_quota.daily }}/day, {{ gpu_quota.monthly }}/month
           <form action="/logout" method="post" style="display:inline">
-            <input type="hidden" name="csrf_token" value="{{ logout_csrf_token }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit">Sign out</button>
           </form>
         {% elif google_login_enabled %}
@@ -327,12 +327,14 @@
           then configure your research question and variables.
         </p>
 
+        {% if not auth_required or current_user %}
         <form class="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="drop-zone">
             <div>
               <div class="upload-mark" aria-hidden="true">+</div>
               <label for="csv_file">Choose CSV file</label>
-              <p>Accepted format: .csv</p>
+              <p>Accepted format: .csv, up to {{ max_upload_megabytes }} MB</p>
               <input id="csv_file" name="csv_file" type="file" accept=".csv" required>
             </div>
           </div>
@@ -345,7 +347,9 @@
 
         <div class="sample-data" aria-label="Sample dataset">
           <div class="sample-label">Sample data:</div>
-          <a class="sample-box" href="/sample/wage-education">
+          <form action="/sample/wage-education" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="sample-box" type="submit">
             <span class="data-icon" aria-hidden="true">
               <span></span>
               <span></span>
@@ -358,8 +362,23 @@
               <span></span>
             </span>
             <span class="sample-name">wage_education_sample.csv</span>
-          </a>
+          </button>
+          </form>
         </div>
+        <p class="intro">
+          Uploaded datasets and generated reports are automatically deleted after
+          {{ data_retention_hours }} hours. Do not upload confidential, personally
+          identifiable, regulated, or otherwise sensitive data.
+        </p>
+        {% else %}
+          <div class="actions">
+            {% if google_login_enabled %}
+              <a class="sample-box" href="/login">Sign in with Google to begin</a>
+            {% else %}
+              <p>Sign-in is required, but Google authentication is not configured.</p>
+            {% endif %}
+          </div>
+        {% endif %}
       </section>
     </main>
   </div>

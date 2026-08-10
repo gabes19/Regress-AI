@@ -6,6 +6,35 @@ from dataclasses import dataclass
 #Define maximum amount of categories for one-hot encoding
 MAX_AUTO_CATEGORIES = 25
 
+
+class CSVValidationError(ValueError):
+    """Raised when a CSV violates an application intake limit."""
+
+
+def validate_csv_shape(csv_path, max_rows: int, max_columns: int) -> None:
+    """Reject oversized CSV shapes before loading the full dataset in memory."""
+    header = pd.read_csv(csv_path, nrows=0)
+    column_count = len(header.columns)
+    if column_count == 0:
+        raise CSVValidationError("The CSV must contain at least one column.")
+    if column_count > max_columns:
+        raise CSVValidationError(
+            f"The CSV has {column_count:,} columns; the maximum is "
+            f"{max_columns:,}."
+        )
+
+    row_count = 0
+    for chunk in pd.read_csv(csv_path, chunksize=10_000):
+        row_count += len(chunk)
+        if row_count > max_rows:
+            raise CSVValidationError(
+                f"The CSV has more than {max_rows:,} rows, which is the "
+                "current maximum."
+            )
+
+    if row_count == 0:
+        raise CSVValidationError("The CSV must contain at least one data row.")
+
 @dataclass
 class PreparedAnalysisData:
     y: pd.Series # cleaned dependent variable

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ status_code }} · RegressAI</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #080808;
+      color: #f3f3f3;
+      font-family: "Courier New", Courier, monospace;
+    }
+    main {
+      width: min(100%, 640px);
+      border: 1px solid #383838;
+      background: #111;
+      padding: 32px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+    }
+    .code { margin: 0 0 10px; color: #999; font-size: 13px; }
+    h1 { margin: 0 0 16px; font-size: clamp(28px, 6vw, 48px); }
+    p { margin: 0 0 24px; color: #bbb; line-height: 1.7; }
+    a {
+      display: inline-block;
+      border: 1px solid #f3f3f3;
+      padding: 12px 18px;
+      color: #f3f3f3;
+      text-decoration: none;
+    }
+    a:hover { background: #f3f3f3; color: #080808; }
+  </style>
+</head>
+<body>
+  <main role="alert">
+    <p class="code">HTTP {{ status_code }}</p>
+    <h1>{{ title }}</h1>
+    <p>{{ message }}</p>
+    <a href="/">Return to RegressAI</a>
+  </main>
+</body>
+</html>
