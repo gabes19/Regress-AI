@@ -45,6 +45,7 @@ Live A4500 Benchmarks:
 | Small B | 3.960s | 1.578s | 6.080s / — | 2.51× | 0.65× (53.5% slower) | $0.0010 | pass | parity-only |
 | Medium A | 3.964s | 1.102s | 2.287s / — | 3.60× | 1.73× (42.3% faster) | $0.0004 | pass | eligible |
 | Medium B | 20.011s | 5.159s | 7.062s / — | 3.88× | 2.83× (64.7% faster) | $0.0012 | pass | eligible |
+| Large A | 68.248s | 7.200s | 10.184s / 21.990s | 9.48× | 6.70× (85.1% faster) | $0.0018 | pass | eligible |
 <!-- BENCHMARK_RESULTS_END -->
 
 ## Results Page
