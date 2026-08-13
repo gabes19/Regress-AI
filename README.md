@@ -1,6 +1,6 @@
 # RegressAI
 
-RegressAI is a Python-first, browser-based regression analysis and stress-testing tool for students and researchers. Users upload a dataset, define a research question, choose a dependent variable, choose a main independent variable, add controls, and view regression results explained in a clean, AI-assisted, interactive dashboard.
+RegressAI is a Python-first, browser-based regression analysis and stress-testing tool for students, researchers, and anyone looking for a web-based tool to get insights from their data with an AI generated explanation. Users upload a dataset, define a research question, choose a dependent variable, choose a main independent variable, add controls, and view regression results explained in a clean, AI-assisted, interactive dashboard.
 
 ## What Users Can Do
 
