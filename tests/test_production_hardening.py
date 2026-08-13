@@ -225,3 +225,19 @@ def test_production_configuration_fails_closed(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Unsafe production configuration"):
         app_module.validate_production_configuration(flask_app)
+
+
+def test_production_image_includes_static_assets():
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+
+    assert "COPY static ./static" in dockerfile
+
+
+def test_logo_static_asset_is_served(monkeypatch):
+    monkeypatch.setitem(app_module.app.config, "TESTING", True)
+
+    response = app_module.app.test_client().get("/static/logo.png")
+
+    assert response.status_code == 200
+    assert response.mimetype == "image/png"
+    assert response.data.startswith(b"\x89PNG\r\n\x1a\n")

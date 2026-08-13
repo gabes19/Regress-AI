@@ -23,6 +23,7 @@ RUN python -m pip install --upgrade pip \
 COPY app.py config.py gunicorn.conf.py docker-entrypoint.sh ./
 COPY regressionlab ./regressionlab
 COPY templates ./templates
+COPY static ./static
 COPY sample_data ./sample_data
 
 RUN groupadd --system regressai \
