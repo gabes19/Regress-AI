@@ -17,7 +17,7 @@ RegressAI is a Python-first, browser-based regression analysis and stress-testin
 - Log in to receive AI-generated interpretation of regression results.
 - Export PDF and LaTeX reports while signed in or signed out.
 
-The goal is to help students, research assistants, and researchers quickly answer:
+The goal is to be a lightweight web tool to help quickly answer:
 
 > Is this regression relationship stable, fragile, or misleading?
 
