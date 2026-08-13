@@ -1,6 +1,6 @@
 # <img src="static/logo.png" alt="RegressAI logo" width="40"> RegressAI
 
-RegressAI is a Python-first, browser-based regression analysis and stress-testing tool for students, researchers, and anyone looking for a web-based tool to get insights from their data with an AI generated explanation. Users upload a dataset, define a research question, choose a dependent variable, choose a main independent variable, add controls, and view regression results explained in a clean, AI-assisted, interactive dashboard.
+RegressAI is a regression analysis and stress-testing tool for students, researchers, and anyone looking for a web-based tool to get insights from their data with an AI generated explanation. Users upload a dataset, define a research question, choose a dependent variable, choose a main independent variable, add controls, and view regression results explained in a clean, AI-assisted, interactive dashboard.
 
 ## What Users Can Do
 
@@ -31,7 +31,16 @@ Cloud execution is optional, account-gated, and disabled by default. Signed-out 
 
 The initial worker target is an A4000 Flex worker with zero active workers and one maximum worker. 
 
-For signed-in users, the measured policy routes jobs at 60,000,000 work units. Analyses above 2,000 bootstrap iterations also require the user to explicitly enable cloud GPU computing in the configuration form; this consent does not bypass the measured workload threshold. Each account is limited to 3 GPU runs per day and 30 per month.
+For signed-in users, the measured policy routes jobs at 60,000,000 work units.
+
+```text
+work units =
+row count × 
+(predictor count + 1) × 
+bootstrap iterations
+```
+
+Analyses above 2,000 bootstrap iterations also require the user to explicitly enable cloud GPU computing in the configuration form; this consent does not bypass the measured workload threshold. Each account is limited to 3 GPU runs per day and 30 per month.
 
 ## CPU/GPU benchmarks
 
