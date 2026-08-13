@@ -2,8 +2,12 @@ from io import BytesIO
 import re
 
 import app as app_module
+import pytest
 
-from regressionlab.services.dataset_service import load_dataset
+from regressionlab.services.dataset_service import (
+    DatasetNotFoundError,
+    load_dataset,
+)
 
 
 DATASET_LOCATION_PATTERN = re.compile(r"/configure/([0-9a-f]{32})$")
@@ -117,6 +121,83 @@ def test_analyze_rejects_unknown_dataset_id(sample_dataset_client):
 
     assert response.status_code == 404
     assert b"Dataset not found" in response.data
+
+
+def test_successful_analysis_deletes_csv_and_metadata(
+    sample_dataset_client,
+):
+    client, dataset = sample_dataset_client
+    metadata_path = dataset.storage_path.with_suffix(".json")
+
+    response = client.post(
+        "/analyze",
+        data={
+            "dataset_id": dataset.dataset_id,
+            "research_question": "Does education predict wages?",
+            "dependent_variable": "wage",
+            "main_independent_variable": "education",
+            "bootstrap_iterations": "2",
+        },
+    )
+
+    assert response.status_code == 200
+    assert not dataset.storage_path.exists()
+    assert not metadata_path.exists()
+    assert b"Uploaded CSV deleted from RegressAI storage" in response.data
+    with pytest.raises(DatasetNotFoundError, match="Dataset not found"):
+        load_dataset(
+            dataset.dataset_id,
+            upload_folder=app_module.app.config["UPLOAD_FOLDER"],
+        )
+
+
+def test_failed_analysis_keeps_csv_for_correcting_configuration(
+    sample_dataset_client,
+):
+    client, dataset = sample_dataset_client
+    metadata_path = dataset.storage_path.with_suffix(".json")
+
+    response = client.post(
+        "/analyze",
+        data={
+            "dataset_id": dataset.dataset_id,
+            "research_question": "Does wage predict itself?",
+            "dependent_variable": "wage",
+            "main_independent_variable": "wage",
+            "bootstrap_iterations": "2",
+        },
+    )
+
+    assert response.status_code == 400
+    assert dataset.storage_path.exists()
+    assert metadata_path.exists()
+    assert client.get(f"/configure/{dataset.dataset_id}").status_code == 200
+
+
+def test_analysis_fails_closed_when_csv_deletion_cannot_be_confirmed(
+    sample_dataset_client,
+    monkeypatch,
+):
+    client, dataset = sample_dataset_client
+
+    def fail_deletion(*args, **kwargs):
+        raise OSError("storage unavailable")
+
+    monkeypatch.setattr(app_module, "delete_dataset", fail_deletion)
+    response = client.post(
+        "/analyze",
+        data={
+            "dataset_id": dataset.dataset_id,
+            "research_question": "Does education predict wages?",
+            "dependent_variable": "wage",
+            "main_independent_variable": "education",
+            "bootstrap_iterations": "2",
+        },
+    )
+
+    assert response.status_code == 500
+    assert b"Uploaded CSV deleted from RegressAI storage" not in response.data
+    assert dataset.storage_path.exists()
 
 
 def test_sample_dataset_enters_same_id_lifecycle(

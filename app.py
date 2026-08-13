@@ -549,6 +549,31 @@ def analyze():
     except (ValueError, ComputeUnavailableError) as error:
         return render_configuration_error(str(error))
 
+    # From this point onward, the results and exports use derived values only.
+    # Fail closed if the raw upload cannot be removed so the results page never
+    # claims successful deletion when the CSV may still be stored.
+    try:
+        delete_dataset(
+            dataset.dataset_id,
+            upload_folder=app.config["UPLOAD_FOLDER"],
+        )
+    except OSError:
+        app.logger.exception(
+            "Analyzed dataset deletion failed dataset_id=%s",
+            dataset.dataset_id,
+        )
+        abort(
+            500,
+            description=(
+                "The analysis finished, but deletion of the uploaded CSV "
+                "could not be confirmed."
+            ),
+        )
+    app.logger.info(
+        "Analyzed dataset deleted dataset_id=%s",
+        dataset.dataset_id,
+    )
+
     compute_mode = compute_result.compute_mode
 
     baseline_coefficient = model_results[0]["coefficient"]
