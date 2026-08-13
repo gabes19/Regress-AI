@@ -107,7 +107,9 @@
     fields.interval.textContent = stage.interval;
     fields.robustness.textContent = stage.robustness;
     fields.robustness.classList.toggle("is-positive", stage.name === "result");
-    fields.stepCount.textContent = `${String(index + 1).padStart(2, "0")} / 05`;
+    if (fields.stepCount) {
+      fields.stepCount.textContent = `${String(index + 1).padStart(2, "0")} / 05`;
+    }
     fields.progress.style.setProperty("--progress", `${stage.progress}%`);
   }
 
