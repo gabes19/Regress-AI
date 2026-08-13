@@ -259,8 +259,8 @@ def update_readme_table(results):
     if start_marker not in text or end_marker not in text:
         raise ValueError("README benchmark markers are missing.")
     rows = [
-        "| Workload | CPU median | GPU compute median | GPU warm/cold E2E | Compute speedup | E2E speedup | GPU cost | Parity | Routing evidence |",
-        "|---|---:|---:|---:|---:|---:|---:|---|---|",
+        "| Workload | CPU median | GPU compute median | GPU warm/cold E2E | Compute speedup | E2E speedup | GPU cost |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for item in results:
         cold = item["gpu_cold_e2e_seconds"]
@@ -270,9 +270,7 @@ def update_readme_table(results):
             f"{item['gpu_compute_median_seconds']:.3f}s | "
             f"{item['gpu_warm_e2e_median_seconds']:.3f}s / {cold_text} | "
             f"{item['compute_speedup']:.2f}× | {item['end_to_end_speedup']:.2f}× "
-            f"({item['comparison']}) | ${item['median_gpu_cost_usd']} | "
-            f"{'pass' if item['parity_passed'] else 'FAIL'} | "
-            f"{'eligible' if item['routing_eligible'] else 'parity-only'} |"
+            f"({item['comparison']}) | ${item['median_gpu_cost_usd']} |"
         )
     replacement = start_marker + "\n" + "\n".join(rows) + "\n" + end_marker
     before, remainder = text.split(start_marker, 1)

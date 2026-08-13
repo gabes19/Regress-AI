@@ -40,13 +40,13 @@ Live A4500 Benchmarks:
 (Medium workloads are most similar to production data traffic)
 
 <!-- BENCHMARK_RESULTS_START -->
-| Workload | CPU median | GPU compute median | GPU warm/cold E2E | Compute speedup | E2E speedup | GPU cost | Parity | Routing evidence |
-|---|---:|---:|---:|---:|---:|---:|---|---|
-| Small A | 2.904s | 0.423s | 2.255s / 3.189s | 6.86× | 1.29× (22.3% faster) | $0.0004 | pass | parity-only |
-| Small B | 3.960s | 1.578s | 6.080s / — | 2.51× | 0.65× (53.5% slower) | $0.0010 | pass | parity-only |
-| Medium A | 3.964s | 1.102s | 2.287s / — | 3.60× | 1.73× (42.3% faster) | $0.0004 | pass | eligible |
-| Medium B | 20.011s | 5.159s | 7.062s / — | 3.88× | 2.83× (64.7% faster) | $0.0012 | pass | eligible |
-| Large A | 68.248s | 7.200s | 10.184s / 21.990s | 9.48× | 6.70× (85.1% faster) | $0.0018 | pass | eligible |
+| Workload | CPU median | GPU compute median | GPU warm/cold E2E | Compute speedup | E2E speedup | GPU cost |
+|---|---:|---:|---:|---:|---:|---:|
+| Small A | 2.904s | 0.423s | 2.255s / 3.189s | 6.86× | 1.29× (22.3% faster) | $0.0004 |
+| Small B | 3.960s | 1.578s | 6.080s / — | 2.51× | 0.65× (53.5% slower) | $0.0010 |
+| Medium A | 3.964s | 1.102s | 2.287s / — | 3.60× | 1.73× (42.3% faster) | $0.0004 |
+| Medium B | 20.011s | 5.159s | 7.062s / — | 3.88× | 2.83× (64.7% faster) | $0.0012 |
+| Large A | 68.248s | 7.200s | 10.184s / 21.990s | 9.48× | 6.70× (85.1% faster) | $0.0018 |
 <!-- BENCHMARK_RESULTS_END -->
 
 ## Results Page

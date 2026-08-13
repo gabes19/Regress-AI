@@ -60,6 +60,8 @@ def test_readme_table_renderer_replaces_only_marked_section(tmp_path, monkeypatc
     assert rendered.startswith("Before") and rendered.endswith("After")
     assert "| Test |" in rendered
     assert "2.20×" in rendered
+    assert "Parity" not in rendered
+    assert "Routing evidence" not in rendered
 
 
 def test_profile_selection_uses_canonical_order_and_rejects_unknown_names():
