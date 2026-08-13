@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Results | RegressAI</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
   <style>
     :root {
       color-scheme: dark;
@@ -51,11 +52,20 @@
     }
 
     .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       margin: 0;
       color: var(--text);
       font-size: 20px;
       font-weight: 700;
       letter-spacing: 0;
+    }
+
+    .brand-logo {
+      width: 28px;
+      height: 28px;
+      object-fit: contain;
     }
 
     .status {
@@ -431,7 +441,10 @@
 <body>
   <div class="page">
     <header class="topbar" aria-label="Application header">
-      <h1 class="brand">RegressAI</h1>
+      <h1 class="brand">
+        <img class="brand-logo" src="{{ url_for('static', filename='logo.png') }}" alt="">
+        RegressAI
+      </h1>
       <div class="status">
         {% if current_user %}
           {{ current_user.display_name or current_user.email }} · GPU {{ gpu_quota.daily }}/day, {{ gpu_quota.monthly }}/month

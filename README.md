@@ -49,4 +49,4 @@ Live A4500 Benchmarks:
 <!-- BENCHMARK_RESULTS_END -->
 
 ## Results Page
-![alt text](image.png)
+![alt text](static/screenshot.png)

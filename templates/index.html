@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>RegressAI</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
   <style>
     :root {
       color-scheme: dark;
@@ -50,11 +51,20 @@
     }
 
     .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       margin: 0;
       color: var(--text);
       font-size: 20px;
       font-weight: 700;
       letter-spacing: 0;
+    }
+
+    .brand-logo {
+      width: 28px;
+      height: 28px;
+      object-fit: contain;
     }
 
     .status {
@@ -302,7 +312,10 @@
 <body>
   <div class="page">
     <header class="topbar" aria-label="Application header">
-      <h1 class="brand">RegressAI</h1>
+      <h1 class="brand">
+        <img class="brand-logo" src="{{ url_for('static', filename='logo.png') }}" alt="">
+        RegressAI
+      </h1>
       <div class="status">
         {% if current_user %}
           {{ current_user.display_name or current_user.email }} · GPU {{ gpu_quota.daily }}/day, {{ gpu_quota.monthly }}/month
@@ -320,7 +333,6 @@
 
     <main>
       <section class="upload-panel" aria-labelledby="upload-title">
-        <p class="eyebrow">Initial dataset intake</p>
         <h2 id="upload-title">Upload CSV</h2>
         <p class="intro">
           Start a regression analysis from your dataset. Choose a clean CSV file,
@@ -340,7 +352,6 @@
           </div>
 
           <div class="actions">
-            <div class="flow">Upload -&gt; Configure -&gt; Analyze -&gt; Results</div>
             <button type="submit">Upload CSV</button>
           </div>
         </form>
