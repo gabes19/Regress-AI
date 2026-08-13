@@ -15,6 +15,19 @@ def clean_metric(value):
 
     return metric
 
+
+def format_p_value(value, digits=4):
+    """Format p-values without presenting rounded underflow as exact zero."""
+    metric = clean_metric(value)
+    if metric is None:
+        return "n/a"
+
+    threshold = 10 ** -digits
+    if 0 <= metric < threshold:
+        return f"<{threshold:.{digits}f}"
+
+    return f"{metric:.{digits}f}"
+
 def fit_models(
     data: PreparedAnalysisData,
     dependent_variable: str,

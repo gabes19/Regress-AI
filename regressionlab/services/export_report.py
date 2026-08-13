@@ -11,8 +11,11 @@ import uuid
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from regressionlab.services.regression import clean_metric
-from regressionlab.services.llm_summary import render_analysis_summary_text
+from regressionlab.services.regression import clean_metric, format_p_value
+from regressionlab.services.llm_summary import (
+    CAUSAL_CAVEAT,
+    render_analysis_summary_text,
+)
 
 
 class ReportExportError(Exception):
@@ -165,10 +168,10 @@ def latex_summary(summary):
     lines = [line for line in lines if line]
 
     if not lines:
-        return latex_escape(
-            "No LLM summary was generated for this analysis. "
-            "This is an associational regression analysis, not causal proof."
-        )
+        lines = ["No LLM summary was generated for this analysis."]
+
+    lines = [line for line in lines if line != CAUSAL_CAVEAT]
+    lines.append(CAUSAL_CAVEAT)
 
     return "\n\n".join(latex_escape(line) for line in lines)
 
@@ -216,12 +219,15 @@ def build_latex_document(payload):
     controls = payload.get("controls") or []
     controls_text = ", ".join(controls) if controls else "None"
     bootstrap = payload["bootstrap_results"]
-    ci_lower, ci_upper = bootstrap["ci_95"]
+    bootstrap_ci_lower, bootstrap_ci_upper = bootstrap["ci_95"]
 
     model_rows = []
     for model in payload["models"]:
-        ci_lower, ci_upper = model.get("ci_95") or [None, None]
-        ci_text = f"{format_number(ci_lower, 3)} to {format_number(ci_upper, 3)}"
+        model_ci_lower, model_ci_upper = model.get("ci_95") or [None, None]
+        ci_text = (
+            f"{format_number(model_ci_lower, 3)} to "
+            f"{format_number(model_ci_upper, 3)}"
+        )
 
         model_rows.append(
             " & ".join([
@@ -230,13 +236,13 @@ def build_latex_document(payload):
                 format_number(model.get("coefficient"), 4),
                 format_number(model.get("standard_error"), 4),
                 format_number(model.get("t_value"), 3),
-                format_number(model.get("p_value"), 4),
+                format_p_value(model.get("p_value"), 4),
                 latex_escape(ci_text),
                 format_number(model.get("r_squared"), 4),
                 format_number(model.get("adjusted_r_squared"), 4),
                 format_number(model.get("rmse"), 3),
                 format_number(model.get("f_statistic"), 3),
-                format_number(model.get("f_p_value"), 4),
+                format_p_value(model.get("f_p_value"), 4),
                 str(model.get("n_observations", "n/a")),
             ]) + r" \\"
         )
@@ -285,7 +291,7 @@ def build_latex_document(payload):
 \textbf{{Iterations:}} {payload["bootstrap_iterations"]}\\
 \textbf{{Mean coefficient:}} {format_number(bootstrap["mean"])}\\
 \textbf{{Standard error:}} {format_number(bootstrap["standard_error"])}\\
-\textbf{{95\% interval:}} {format_number(ci_lower)} to {format_number(ci_upper)}
+\textbf{{95\% interval:}} {format_number(bootstrap_ci_lower)} to {format_number(bootstrap_ci_upper)}
 
 \begin{{figure}}[H]
 \centering
@@ -307,9 +313,6 @@ Model & Formula & Coef. & SE & T & P & 95\% CI & R-sq & Adj. R-sq & RMSE & F & F
 
 \section*{{LLM Research Summary}}
 {latex_summary(payload["llm_summary"])}
-
-\vfill
-\textit{{This is an associational regression analysis, not causal proof.}}
 
 \end{{document}}
 """

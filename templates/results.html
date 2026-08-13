@@ -540,7 +540,7 @@
                       <td class="number">{{ model.coefficient|metric(4) }}</td>
                       <td class="number">{{ model.standard_error|metric(4) }}</td>
                       <td class="number">{{ model.t_value|metric(3) }}</td>
-                      <td class="number">{{ model.p_value|metric(4) }}</td>
+                      <td class="number">{{ model.p_value|p_value(4) }}</td>
                       <td class="number">
                         {{ model.ci_95[0]|metric(3) }} to {{ model.ci_95[1]|metric(3) }}
                       </td>
@@ -548,7 +548,7 @@
                       <td class="number">{{ model.adjusted_r_squared|metric(4) }}</td>
                       <td class="number">{{ model.rmse|metric(3) }}</td>
                       <td class="number">{{ model.f_statistic|metric(3) }}</td>
-                      <td class="number">{{ model.f_p_value|metric(4) }}</td>
+                      <td class="number">{{ model.f_p_value|p_value(4) }}</td>
                       <td class="number">{{ model.n_observations }}</td>
                     </tr>
                   {% endfor %}

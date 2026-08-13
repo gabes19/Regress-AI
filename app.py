@@ -30,7 +30,7 @@ from regressionlab.services.charts_and_plots import (
     create_coefficient_chart,
     create_coefficient_plot,
 )
-from regressionlab.services.regression import clean_metric
+from regressionlab.services.regression import clean_metric, format_p_value
 from regressionlab.services.data_processing import (
     CSVValidationError,
     parse_columns,
@@ -270,6 +270,11 @@ def format_metric(value, digits=3):
         return "n/a"
 
     return f"{metric:.{digits}f}"
+
+
+@app.template_filter("p_value")
+def format_p_value_filter(value, digits=4):
+    return format_p_value(value, digits)
 
 # Bundled sample dataset filename.
 SAMPLE_DATASET_FILENAME = "wage_education_sample.csv"
