@@ -660,7 +660,6 @@
                 value="{{ bootstrap_value }}"
                 aria-controls="gpu-opt-in-panel"
               >
-              <p class="hint">GPU eligibility is based on the measured workload threshold of {{ "{:,}".format(gpu_min_work_units) }} work units.</p>
             </div>
 
             {% if current_user %}
@@ -679,25 +678,12 @@
                   >
                   <span>Allow this analysis to use cloud GPU computing</span>
                 </label>
-                <p class="hint">
-                  Required above {{ gpu_opt_in_iteration_threshold }} iterations.
-                  The GPU is used only when the prepared workload qualifies and
-                  quota is available. A prepared numeric, row-level analysis
-                  matrix is sent to the cloud GPU provider; the uploaded CSV is
-                  still deleted from RegressAI storage after the analysis.
-                </p>
               </fieldset>
             {% else %}
               <p class="hint">This analysis will use CPU compute and a deterministic research summary.</p>
             {% endif %}
 
             <div class="actions">
-              <div class="flow">Upload -&gt; Configure -&gt; Analyze -&gt; Results</div>
-              <p class="hint">
-                After a successful analysis, the uploaded CSV is deleted and
-                cannot be reused. Derived results remain available for report
-                export.
-              </p>
               <div class="button-row">
                 <a class="button" href="/">Upload another CSV</a>
                 <button type="submit" id="run-analysis-button">Run Analysis</button>
