@@ -124,6 +124,29 @@
       line-height: 1.7;
     }
 
+    .error-box {
+      border: 1px solid #ff7474;
+      background: rgba(130, 24, 24, 0.18);
+      color: var(--text);
+      margin: 24px 0;
+      padding: 16px 18px;
+    }
+
+    .error-box strong {
+      display: block;
+      color: #ffb3b3;
+      font-size: 14px;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .error-box p {
+      margin: 0;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
     .upload-form {
       display: grid;
       gap: 18px;
@@ -324,9 +347,9 @@
             <button type="submit">Sign out</button>
           </form>
         {% elif google_login_enabled %}
-          <a href="/login">Sign in for cloud GPU</a>
+          <a href="/login">Log in to access cloud GPU + LLM features</a>
         {% else %}
-          CPU mode
+          CPU + deterministic mode
         {% endif %}
       </div>
     </header>
@@ -339,7 +362,13 @@
           then configure your research question and variables.
         </p>
 
-        {% if not auth_required or current_user %}
+        {% if error_message %}
+          <div class="error-box" role="alert" aria-live="assertive">
+            <strong>CSV could not be uploaded</strong>
+            <p>{{ error_message }}</p>
+          </div>
+        {% endif %}
+
         <form class="upload-form" action="/upload" method="post" enctype="multipart/form-data">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="drop-zone">
@@ -381,15 +410,6 @@
           {{ data_retention_hours }} hours. Do not upload confidential, personally
           identifiable, regulated, or otherwise sensitive data.
         </p>
-        {% else %}
-          <div class="actions">
-            {% if google_login_enabled %}
-              <a class="sample-box" href="/login">Sign in with Google to begin</a>
-            {% else %}
-              <p>Sign-in is required, but Google authentication is not configured.</p>
-            {% endif %}
-          </div>
-        {% endif %}
       </section>
     </main>
   </div>

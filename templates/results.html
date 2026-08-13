@@ -453,9 +453,9 @@
             <button type="submit">Sign out</button>
           </form>
         {% elif google_login_enabled %}
-          <a href="/login">Sign in for cloud GPU</a>
+          <a href="/login">Log in to access cloud GPU + LLM features</a>
         {% else %}
-          CPU mode
+          CPU + deterministic mode
         {% endif %}
       </div>
     </header>
@@ -597,8 +597,16 @@
             {% endif %}
 
             <section class="note-panel">
-              <h3 class="section-title">LLM Research Summary</h3>
-              {% if llm_summary.generation_status != "generated" %}
+              <h3 class="section-title">
+                {% if llm_enabled_for_user %}LLM Research Summary{% else %}Deterministic Research Summary{% endif %}
+              </h3>
+              {% if not llm_enabled_for_user %}
+                <div class="summary-block">
+                  <p class="summary-unavailable">
+                    Log in to access LLM features. Showing a deterministic evaluation of the analysis.
+                  </p>
+                </div>
+              {% elif llm_summary.generation_status != "generated" %}
                 <div class="summary-block">
                   <p class="summary-unavailable">
                     AI explanation unavailable; showing a deterministic summary of the analysis.

@@ -73,6 +73,16 @@ def run_analysis_compute(
     logger=None,
     gpu_opt_in=False,
 ):
+    if user_id is None:
+        return _run_cpu(
+            data,
+            dependent_variable,
+            main_independent_variable,
+            controls,
+            bootstrap_iterations,
+            "CPU",
+        )
+
     work_units = calculate_work_units(data, bootstrap_iterations)
     consent_required = (
         work_units >= config["GPU_MIN_WORK_UNITS"]
@@ -100,13 +110,6 @@ def run_analysis_compute(
             data, dependent_variable, main_independent_variable,
             controls, bootstrap_iterations, "CPU"
         )
-    if user_id is None:
-        return _fallback_or_raise(
-            data, dependent_variable, main_independent_variable, controls,
-            bootstrap_iterations, work_units, config,
-            "A signed-in account is required for cloud GPU."
-        )
-
     try:
         gpu_request = build_gpu_request(
             data=data,

@@ -1,7 +1,8 @@
 import os
-from functools import wraps
+import re
 from threading import Lock
 from time import monotonic
+import uuid
 
 import click
 import pandas as pd
@@ -98,13 +99,6 @@ def validate_production_configuration(flask_app):
         problems.append("PROXY_FIX_ENABLED must be true behind the host proxy")
     if not flask_app.config.get("TRUSTED_HOSTS"):
         problems.append("TRUSTED_HOSTS must list the public hostname")
-    if flask_app.config.get("AUTH_REQUIRED") and not (
-        flask_app.config.get("GOOGLE_CLIENT_ID")
-        and flask_app.config.get("GOOGLE_CLIENT_SECRET")
-    ):
-        problems.append(
-            "Google OAuth credentials are required when AUTH_REQUIRED is true"
-        )
     if problems:
         raise RuntimeError(
             "Unsafe production configuration: " + "; ".join(problems)
@@ -156,24 +150,36 @@ app.extensions["artifact_cleanup_lock"] = Lock()
 app.extensions["last_artifact_cleanup"] = 0.0
 
 
-def login_required(view):
-    @wraps(view)
-    def wrapped(*args, **kwargs):
-        if app.testing or not app.config["AUTH_REQUIRED"] or current_user():
-            return view(*args, **kwargs)
-        if app.extensions.get("google_oauth") is None:
-            abort(503, description="Sign-in is required but is not configured.")
-        return redirect(url_for("login"))
-
-    return wrapped
+GUEST_OWNER_SESSION_KEY = "guest_artifact_owner"
+GUEST_OWNER_PATTERN = re.compile(r"[0-9a-f]{32}")
 
 
-def artifact_access():
+def guest_owner_key(create=False):
+    """Return this browser session's opaque guest artifact owner key."""
+    guest_id = session.get(GUEST_OWNER_SESSION_KEY)
+    if guest_id is not None and not GUEST_OWNER_PATTERN.fullmatch(str(guest_id)):
+        session.pop(GUEST_OWNER_SESSION_KEY, None)
+        guest_id = None
+    if guest_id is None and create:
+        guest_id = uuid.uuid4().hex
+        session[GUEST_OWNER_SESSION_KEY] = guest_id
+    return f"guest:{guest_id}" if guest_id else None
+
+
+def artifact_access(create_guest=False):
+    """Return the owner for new artifacts and all owners this session may use."""
     user = current_user()
-    return (
-        (user or {}).get("id"),
-        bool(app.config["AUTH_REQUIRED"]),
-    )
+    guest_key = guest_owner_key(create=create_guest and user is None)
+    user_key = f"user:{user['id']}" if user else None
+    accepted_owner_ids = {
+        owner_key for owner_key in (user_key, guest_key) if owner_key
+    }
+    return user_key or guest_key, accepted_owner_ids
+
+
+def render_upload_error(message, status_code=400):
+    """Keep recoverable intake errors inside the normal upload experience."""
+    return render_template("index.html", error_message=message), status_code
 
 
 def run_artifact_cleanup():
@@ -252,7 +258,6 @@ def inject_account_context():
         "current_user": user,
         "gpu_quota": quota,
         "google_login_enabled": app.extensions.get("google_oauth") is not None,
-        "auth_required": app.config["AUTH_REQUIRED"],
         "max_upload_megabytes": app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024),
         "data_retention_hours": app.config["DATA_RETENTION_HOURS"],
     }
@@ -302,31 +307,37 @@ def google_callback():
     except Exception as error:
         app.logger.warning("Google login failed error_type=%s", type(error).__name__)
         abort(400, description="Google login could not be verified.")
+    guest_id = session.get(GUEST_OWNER_SESSION_KEY)
     session.clear()
+    if guest_id and GUEST_OWNER_PATTERN.fullmatch(str(guest_id)):
+        session[GUEST_OWNER_SESSION_KEY] = guest_id
     session["user"] = user
     return redirect(url_for("start"))
 
 
 @app.route("/logout", methods=["POST"])
 def logout():
+    guest_id = session.get(GUEST_OWNER_SESSION_KEY)
     session.clear()
+    if guest_id and GUEST_OWNER_PATTERN.fullmatch(str(guest_id)):
+        session[GUEST_OWNER_SESSION_KEY] = guest_id
     return redirect(url_for("start"))
 
 @app.route("/upload", methods=["POST"])
-@login_required
 @limiter.limit(lambda: app.config["UPLOAD_RATE_LIMIT"], exempt_when=lambda: app.testing)
 def upload():
     '''Handles user CSV upload'''
     uploaded_file = request.files.get("csv_file")
 
     if uploaded_file is None or uploaded_file.filename == "":
-        return "No file uploaded", 400
+        return render_upload_error("Please choose a CSV file.")
 
+    owner_id, _ = artifact_access(create_guest=True)
     try:
         dataset = store_uploaded_dataset(
             uploaded_file,
             upload_folder=app.config["UPLOAD_FOLDER"],
-            owner_id=(current_user() or {}).get("id"),
+            owner_id=owner_id,
         )
         validate_csv_shape(
             dataset.storage_path,
@@ -340,8 +351,9 @@ def upload():
                 dataset.dataset_id,
                 upload_folder=app.config["UPLOAD_FOLDER"],
             )
-        return str(error), 400
+        return render_upload_error(str(error))
     except (
+        OSError,
         UnicodeDecodeError,
         pd.errors.EmptyDataError,
         pd.errors.ParserError,
@@ -351,7 +363,9 @@ def upload():
                 dataset.dataset_id,
                 upload_folder=app.config["UPLOAD_FOLDER"],
             )
-        return "The uploaded file could not be read as CSV data.", 400
+        return render_upload_error(
+            "The uploaded file could not be read as CSV data."
+        )
 
     return redirect(
         url_for("configure_dataset", dataset_id=dataset.dataset_id)
@@ -359,24 +373,36 @@ def upload():
 
 
 @app.route("/configure/<dataset_id>")
-@login_required
 def configure_dataset(dataset_id):
-    owner_id, enforce_owner = artifact_access()
+    owner_id, accepted_owner_ids = artifact_access()
     try:
         dataset = load_dataset(
             dataset_id,
             upload_folder=app.config["UPLOAD_FOLDER"],
             owner_id=owner_id,
-            enforce_owner=enforce_owner,
+            accepted_owner_ids=accepted_owner_ids,
+            enforce_owner=True,
         )
     except DatasetNotFoundError as error:
         abort(404, description=str(error))
+
+    try:
+        columns = parse_columns(dataset.storage_path)
+    except (
+        OSError,
+        UnicodeDecodeError,
+        pd.errors.EmptyDataError,
+        pd.errors.ParserError,
+    ):
+        return render_upload_error(
+            "The stored CSV could not be read. Please upload it again."
+        )
 
     return render_template(
         "configure.html",
         dataset_id=dataset.dataset_id,
         filename=dataset.original_filename,
-        columns=parse_columns(dataset.storage_path),
+        columns=columns,
         gpu_opt_in_iteration_threshold=app.config[
             "GPU_OPT_IN_ITERATION_THRESHOLD"
         ],
@@ -384,7 +410,6 @@ def configure_dataset(dataset_id):
     )
 
 @app.route("/sample/wage-education", methods=["POST"])
-@login_required
 @limiter.limit(lambda: app.config["UPLOAD_RATE_LIMIT"], exempt_when=lambda: app.testing)
 def sample_wage_education():
     '''Load the bundled wage/education sample dataset.'''
@@ -393,12 +418,13 @@ def sample_wage_education():
         SAMPLE_DATASET_FILENAME
     )
 
+    owner_id, _ = artifact_access(create_guest=True)
     try:
         dataset = store_existing_dataset(
             sample_path,
             upload_folder=app.config["UPLOAD_FOLDER"],
             original_filename=SAMPLE_DATASET_FILENAME,
-            owner_id=(current_user() or {}).get("id"),
+            owner_id=owner_id,
         )
     except DatasetNotFoundError as error:
         abort(404, description=str(error))
@@ -409,24 +435,27 @@ def sample_wage_education():
 
 
 @app.route("/analyze", methods=["POST"])
-@login_required
 @limiter.limit(lambda: app.config["ANALYSIS_RATE_LIMIT"], exempt_when=lambda: app.testing)
 def analyze():
+    user = current_user()
     dataset_id = request.form.get("dataset_id")
     research_question = request.form.get("research_question")
     dependent_variable = request.form.get("dependent_variable")
     main_independent_variable = request.form.get("main_independent_variable")
     controls = request.form.getlist("controls")
     bootstrap_iterations = request.form.get("bootstrap_iterations")
-    gpu_opt_in_requested = request.form.get("use_gpu") == "on"
+    gpu_opt_in_requested = bool(
+        user and request.form.get("use_gpu") == "on"
+    )
 
-    owner_id, enforce_owner = artifact_access()
+    owner_id, accepted_owner_ids = artifact_access()
     try:
         dataset = load_dataset(
             dataset_id,
             upload_folder=app.config["UPLOAD_FOLDER"],
             owner_id=owner_id,
-            enforce_owner=enforce_owner,
+            accepted_owner_ids=accepted_owner_ids,
+            enforce_owner=True,
         )
     except DatasetNotFoundError as error:
         abort(404, description=str(error))
@@ -511,7 +540,7 @@ def analyze():
             bootstrap_iterations=bootstrap_iterations,
             config=app.config,
             gpu_client=app.extensions.get("runpod_client"),
-            user_id=(current_user() or {}).get("id"),
+            user_id=(user or {}).get("id"),
             logger=app.logger,
             gpu_opt_in=gpu_opt_in,
         )
@@ -545,16 +574,19 @@ def analyze():
         compute_mode=compute_mode,
         runtime_seconds=compute_result.runtime_seconds,
     )
-    try:
-        llm_summary = generate_llm_summary(
-            summary_facts,
-            client=app.extensions.get("openai_client"),
-            model=app.config["OPENAI_MODEL"],
-            pricing=app.config["OPENAI_MODEL_PRICING"],
-            max_output_tokens=app.config["OPENAI_MAX_OUTPUT_TOKENS"],
-            logger=app.logger,
-        )
-    except LLMSummaryError:
+    if user:
+        try:
+            llm_summary = generate_llm_summary(
+                summary_facts,
+                client=app.extensions.get("openai_client"),
+                model=app.config["OPENAI_MODEL"],
+                pricing=app.config["OPENAI_MODEL_PRICING"],
+                max_output_tokens=app.config["OPENAI_MAX_OUTPUT_TOKENS"],
+                logger=app.logger,
+            )
+        except LLMSummaryError:
+            llm_summary = build_fallback_summary(summary_facts)
+    else:
         llm_summary = build_fallback_summary(summary_facts)
 
     llm_summary_data = llm_summary.model_dump(mode="json")
@@ -600,20 +632,21 @@ def analyze():
         compute_mode=compute_mode,
         compute_runtime_seconds=compute_result.runtime_seconds,
         gpu_name=compute_result.gpu_name,
+        llm_enabled_for_user=bool(user),
     )
 
 
 @app.route("/export/latex/<export_token>")
-@login_required
 @limiter.limit(lambda: app.config["EXPORT_RATE_LIMIT"], exempt_when=lambda: app.testing)
 def export_latex(export_token):
-    owner_id, enforce_owner = artifact_access()
+    owner_id, accepted_owner_ids = artifact_access()
     try:
         report_dir, tex_path = ensure_report_artifacts(
             export_token,
             reports_folder=app.config["REPORTS_FOLDER"],
             owner_id=owner_id,
-            enforce_owner=enforce_owner,
+            accepted_owner_ids=accepted_owner_ids,
+            enforce_owner=True,
         )
         zip_path = build_latex_zip(report_dir, tex_path)
     except ExportNotFoundError as error:
@@ -629,16 +662,16 @@ def export_latex(export_token):
     )
 
 @app.route("/export/pdf/<export_token>")
-@login_required
 @limiter.limit(lambda: app.config["EXPORT_RATE_LIMIT"], exempt_when=lambda: app.testing)
 def export_pdf(export_token):
-    owner_id, enforce_owner = artifact_access()
+    owner_id, accepted_owner_ids = artifact_access()
     try:
         report_dir, tex_path = ensure_report_artifacts(
             export_token,
             reports_folder=app.config["REPORTS_FOLDER"],
             owner_id=owner_id,
-            enforce_owner=enforce_owner,
+            accepted_owner_ids=accepted_owner_ids,
+            enforce_owner=True,
         )
         pdf_path = compile_pdf_report(report_dir, tex_path)
     except ExportNotFoundError as error:
@@ -673,15 +706,13 @@ def handle_csrf_error(error):
 
 @app.errorhandler(413)
 def handle_upload_too_large(error):
-    return render_template(
-        "error.html",
-        status_code=413,
-        title="Upload too large",
-        message=(
+    return render_upload_error(
+        (
             f"CSV files must be no larger than "
             f"{app.config['MAX_CONTENT_LENGTH'] // (1024 * 1024)} MB."
         ),
-    ), 413
+        413,
+    )
 
 
 @app.errorhandler(429)

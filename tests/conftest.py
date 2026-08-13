@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app import app
+from app import GUEST_OWNER_SESSION_KEY, app
 from regressionlab.services.dataset_service import store_existing_dataset
 
 
@@ -21,9 +21,15 @@ def sample_dataset_client(tmp_path, monkeypatch):
     monkeypatch.setitem(app.config, "REPORTS_FOLDER", reports_folder)
     monkeypatch.setitem(app.extensions, "openai_client", None)
 
+    client = app.test_client()
+    guest_id = "a" * 32
+    with client.session_transaction() as session:
+        session[GUEST_OWNER_SESSION_KEY] = guest_id
+
     dataset = store_existing_dataset(
         SAMPLE_CSV,
         upload_folder=upload_folder,
+        owner_id=f"guest:{guest_id}",
     )
 
-    return app.test_client(), dataset
+    return client, dataset

@@ -41,7 +41,6 @@ def test_health_check_is_shallow_and_has_security_headers(monkeypatch):
 def test_upload_requires_csrf_token(tmp_path, monkeypatch):
     monkeypatch.setitem(app_module.app.config, "TESTING", True)
     monkeypatch.setitem(app_module.app.config, "WTF_CSRF_ENABLED", True)
-    monkeypatch.setitem(app_module.app.config, "AUTH_REQUIRED", False)
     monkeypatch.setitem(app_module.app.config, "UPLOAD_FOLDER", tmp_path)
 
     response = app_module.app.test_client().post(
@@ -57,7 +56,6 @@ def test_upload_requires_csrf_token(tmp_path, monkeypatch):
 def test_upload_size_limit_returns_recoverable_error(tmp_path, monkeypatch):
     monkeypatch.setitem(app_module.app.config, "TESTING", True)
     monkeypatch.setitem(app_module.app.config, "WTF_CSRF_ENABLED", False)
-    monkeypatch.setitem(app_module.app.config, "AUTH_REQUIRED", False)
     monkeypatch.setitem(app_module.app.config, "MAX_CONTENT_LENGTH", 128)
     monkeypatch.setitem(app_module.app.config, "UPLOAD_FOLDER", tmp_path)
 
@@ -68,13 +66,13 @@ def test_upload_size_limit_returns_recoverable_error(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 413
-    assert b"Upload too large" in response.data
+    assert b"CSV could not be uploaded" in response.data
+    assert b"CSV files must be no larger" in response.data
 
 
 def test_upload_rate_limit_is_enforced(tmp_path, monkeypatch):
     monkeypatch.setitem(app_module.app.config, "TESTING", False)
     monkeypatch.setitem(app_module.app.config, "WTF_CSRF_ENABLED", False)
-    monkeypatch.setitem(app_module.app.config, "AUTH_REQUIRED", False)
     monkeypatch.setitem(app_module.app.config, "UPLOAD_RATE_LIMIT", "1 per hour")
     monkeypatch.setitem(app_module.app.config, "UPLOAD_FOLDER", tmp_path)
     app_module.limiter.reset()
@@ -99,15 +97,13 @@ def test_upload_rate_limit_is_enforced(tmp_path, monkeypatch):
     assert b"Too many requests" in second.data
 
 
-def test_protected_routes_require_sign_in(monkeypatch):
+def test_core_routes_do_not_redirect_guests_to_sign_in(monkeypatch):
     monkeypatch.setitem(app_module.app.config, "TESTING", False)
-    monkeypatch.setitem(app_module.app.config, "AUTH_REQUIRED", True)
     monkeypatch.setitem(app_module.app.extensions, "google_oauth", object())
 
     response = app_module.app.test_client().get("/configure/" + "0" * 32)
 
-    assert response.status_code == 302
-    assert response.location.endswith("/login")
+    assert response.status_code == 404
 
 
 def test_dataset_owner_is_enforced(tmp_path):
@@ -118,7 +114,7 @@ def test_dataset_owner_is_enforced(tmp_path):
         tmp_path,
         owner_id=7,
         enforce_owner=True,
-    ).owner_id == 7
+    ).owner_id == "user:7"
     with pytest.raises(DatasetNotFoundError, match="Dataset not found"):
         load_dataset(
             dataset.dataset_id,
@@ -137,7 +133,7 @@ def test_export_owner_is_enforced(tmp_path):
 
     assert load_export_payload(
         token, tmp_path, owner_id=7, enforce_owner=True
-    )["owner_id"] == 7
+    )["owner_id"] == "user:7"
     with pytest.raises(ExportNotFoundError, match="not found"):
         load_export_payload(
             token, tmp_path, owner_id=8, enforce_owner=True
@@ -216,7 +212,6 @@ def test_production_configuration_fails_closed(monkeypatch):
         SESSION_COOKIE_SECURE=False,
         PROXY_FIX_ENABLED=False,
         TRUSTED_HOSTS=None,
-        AUTH_REQUIRED=True,
         GOOGLE_CLIENT_ID=None,
         GOOGLE_CLIENT_SECRET=None,
     )

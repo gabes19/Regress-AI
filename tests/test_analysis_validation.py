@@ -53,6 +53,8 @@ def test_gpu_checkbox_is_hidden_until_iterations_exceed_threshold(
     sample_dataset_client,
 ):
     client, dataset = sample_dataset_client
+    with client.session_transaction() as session:
+        session["user"] = {"id": 1, "email": "user@example.com"}
 
     response = client.get(f"/configure/{dataset.dataset_id}")
 
@@ -66,6 +68,8 @@ def test_gpu_checkbox_selection_is_preserved_after_validation_error(
     sample_dataset_client,
 ):
     client, dataset = sample_dataset_client
+    with client.session_transaction() as session:
+        session["user"] = {"id": 1, "email": "user@example.com"}
 
     response = client.post(
         "/analyze",

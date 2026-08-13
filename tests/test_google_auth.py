@@ -21,11 +21,15 @@ def test_google_callback_stores_minimal_session_identity(tmp_path, monkeypatch):
     monkeypatch.setitem(app_module.app.config, "GPU_USAGE_DATABASE", database)
     monkeypatch.setitem(app_module.app.extensions, "google_oauth", FakeGoogle())
     client = app_module.app.test_client()
+    guest_id = "b" * 32
+    with client.session_transaction() as session:
+        session[app_module.GUEST_OWNER_SESSION_KEY] = guest_id
 
     response = client.get("/auth/google/callback")
     assert response.status_code == 302
     with client.session_transaction() as session:
         assert session["user"]["email"] == "user@example.com"
+        assert session[app_module.GUEST_OWNER_SESSION_KEY] == guest_id
         assert "token" not in session
         assert "google_sub" not in session["user"]
 
@@ -35,8 +39,10 @@ def test_logout_requires_csrf_and_clears_session(tmp_path, monkeypatch):
     initialize_gpu_database(database)
     monkeypatch.setitem(app_module.app.config, "GPU_USAGE_DATABASE", database)
     client = app_module.app.test_client()
+    guest_id = "c" * 32
     with client.session_transaction() as session:
         session["user"] = {"id": 1, "email": "user@example.com"}
+        session[app_module.GUEST_OWNER_SESSION_KEY] = guest_id
 
     assert client.post("/logout", data={"csrf_token": "wrong"}).status_code == 400
     page = client.get("/")
@@ -51,6 +57,7 @@ def test_logout_requires_csrf_and_clears_session(tmp_path, monkeypatch):
     assert response.status_code == 302
     with client.session_transaction() as session:
         assert "user" not in session
+        assert session[app_module.GUEST_OWNER_SESSION_KEY] == guest_id
 
 
 def test_missing_google_configuration_is_recoverable(monkeypatch):

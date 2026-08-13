@@ -411,7 +411,8 @@ def test_analyze_renders_structured_fallback_without_openai(
     )
 
     assert response.status_code == 200
-    assert b"AI explanation unavailable" in response.data
+    assert b"Deterministic Research Summary" in response.data
+    assert b"Log in to access LLM features" in response.data
     assert b"Plain-English answer" in response.data
     assert b"Suggested next checks" in response.data
     assert CAUSAL_CAVEAT.encode() in response.data

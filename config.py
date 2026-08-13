@@ -31,7 +31,6 @@ class Config:
     PROXY_FIX_ENABLED = _environment_flag(
         "PROXY_FIX_ENABLED", IS_PRODUCTION
     )
-    AUTH_REQUIRED = _environment_flag("AUTH_REQUIRED", IS_PRODUCTION)
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
     DATA_ROOT = Path(os.getenv("DATA_ROOT", str(BASE_DIR))).resolve()
     UPLOAD_FOLDER = DATA_ROOT / "uploads"

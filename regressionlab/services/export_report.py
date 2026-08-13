@@ -26,6 +26,24 @@ class ExportNotFoundError(ReportExportError):
 class ReportGenerationError(ReportExportError):
     """Raised when report artifacts cannot be generated."""
 
+
+OWNER_KEY_PATTERN = re.compile(r"(?:user:[1-9][0-9]*|guest:[0-9a-f]{32})")
+
+
+def normalize_owner_key(owner_id):
+    """Normalize current owner keys and legacy numeric user identifiers."""
+    if owner_id is None:
+        return None
+    if isinstance(owner_id, bool):
+        raise ExportNotFoundError("Export payload is invalid.")
+    if isinstance(owner_id, int) or str(owner_id).isdigit():
+        owner_key = f"user:{int(owner_id)}"
+    else:
+        owner_key = str(owner_id)
+    if not OWNER_KEY_PATTERN.fullmatch(owner_key):
+        raise ExportNotFoundError("Export payload is invalid.")
+    return owner_key
+
 def build_export_payload(
     research_question,
     dependent_variable,
@@ -70,7 +88,7 @@ def store_export_payload(export_payload, reports_folder, owner_id=None):
 
     payload_path = payload_dir / f"{export_token}.json"
     stored_payload = dict(export_payload)
-    stored_payload["owner_id"] = owner_id
+    stored_payload["owner_id"] = normalize_owner_key(owner_id)
     with payload_path.open("w", encoding="utf-8") as file:
         json.dump(stored_payload, file, indent=2)
 
@@ -84,6 +102,7 @@ def load_export_payload(
     export_token,
     reports_folder,
     owner_id=None,
+    accepted_owner_ids=None,
     enforce_owner=False,
 ):
     validate_export_token(export_token)
@@ -99,13 +118,14 @@ def load_export_payload(
     with payload_path.open("r", encoding="utf-8") as file:
         payload = json.load(file)
 
-    stored_owner_id = payload.get("owner_id")
-    if stored_owner_id is not None:
-        try:
-            stored_owner_id = int(stored_owner_id)
-        except (TypeError, ValueError) as error:
-            raise ExportNotFoundError("Export payload is invalid.") from error
-    if enforce_owner and stored_owner_id != owner_id:
+    stored_owner_id = normalize_owner_key(payload.get("owner_id"))
+    allowed_owner_ids = {
+        normalize_owner_key(candidate)
+        for candidate in (accepted_owner_ids or set())
+    }
+    if owner_id is not None:
+        allowed_owner_ids.add(normalize_owner_key(owner_id))
+    if enforce_owner and stored_owner_id not in allowed_owner_ids:
         raise ExportNotFoundError("Export payload not found.")
     return payload
 
@@ -298,12 +318,14 @@ def ensure_report_artifacts(
     export_token,
     reports_folder,
     owner_id=None,
+    accepted_owner_ids=None,
     enforce_owner=False,
 ):
     payload = load_export_payload(
         export_token,
         reports_folder,
         owner_id=owner_id,
+        accepted_owner_ids=accepted_owner_ids,
         enforce_owner=enforce_owner,
     )
     report_dir = report_dir_for_token(export_token, reports_folder)

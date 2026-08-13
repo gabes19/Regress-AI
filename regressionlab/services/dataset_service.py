@@ -15,6 +15,7 @@ from werkzeug.utils import secure_filename
 
 
 DATASET_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
+OWNER_KEY_PATTERN = re.compile(r"(?:user:[1-9][0-9]*|guest:[0-9a-f]{32})")
 
 
 class DatasetError(ValueError):
@@ -32,7 +33,22 @@ class StoredDataset:
     dataset_id: str
     original_filename: str
     storage_path: Path
-    owner_id: int | None = None
+    owner_id: str | None = None
+
+
+def normalize_owner_key(owner_id: str | int | None) -> str | None:
+    """Normalize current owner keys and legacy numeric user identifiers."""
+    if owner_id is None:
+        return None
+    if isinstance(owner_id, bool):
+        raise DatasetError("Dataset owner metadata is invalid.")
+    if isinstance(owner_id, int) or str(owner_id).isdigit():
+        owner_key = f"user:{int(owner_id)}"
+    else:
+        owner_key = str(owner_id)
+    if not OWNER_KEY_PATTERN.fullmatch(owner_key):
+        raise DatasetError("Dataset owner metadata is invalid.")
+    return owner_key
 
 
 def validate_dataset_id(dataset_id: str | None) -> str:
@@ -70,12 +86,12 @@ def _write_metadata(
     metadata_path: Path,
     dataset_id: str,
     original_filename: str,
-    owner_id: int | None = None,
+    owner_id: str | int | None = None,
 ) -> None:
     metadata = {
         "dataset_id": dataset_id,
         "original_filename": original_filename,
-        "owner_id": owner_id,
+        "owner_id": normalize_owner_key(owner_id),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     with metadata_path.open("w", encoding="utf-8") as metadata_file:
@@ -85,7 +101,7 @@ def _write_metadata(
 def store_uploaded_dataset(
     uploaded_file: FileStorage,
     upload_folder: str | Path,
-    owner_id: int | None = None,
+    owner_id: str | int | None = None,
 ) -> StoredDataset:
     """Save an uploaded CSV under an opaque server-generated ID."""
     original_filename = _safe_original_filename(uploaded_file.filename)
@@ -110,7 +126,7 @@ def store_uploaded_dataset(
         dataset_id=dataset_id,
         original_filename=original_filename,
         storage_path=csv_path,
-        owner_id=owner_id,
+        owner_id=normalize_owner_key(owner_id),
     )
 
 
@@ -118,7 +134,7 @@ def store_existing_dataset(
     source_path: str | Path,
     upload_folder: str | Path,
     original_filename: str | None = None,
-    owner_id: int | None = None,
+    owner_id: str | int | None = None,
 ) -> StoredDataset:
     """Copy a trusted bundled dataset into the ID-based upload lifecycle."""
     source = Path(source_path).resolve()
@@ -144,14 +160,15 @@ def store_existing_dataset(
         dataset_id=dataset_id,
         original_filename=display_name,
         storage_path=csv_path,
-        owner_id=owner_id,
+        owner_id=normalize_owner_key(owner_id),
     )
 
 
 def load_dataset(
     dataset_id: str | None,
     upload_folder: str | Path,
-    owner_id: int | None = None,
+    owner_id: str | int | None = None,
+    accepted_owner_ids: set[str] | None = None,
     enforce_owner: bool = False,
 ) -> StoredDataset:
     """Resolve a dataset ID to a trusted path and display filename."""
@@ -173,14 +190,18 @@ def load_dataset(
     if metadata.get("dataset_id") != trusted_id:
         raise DatasetNotFoundError("Dataset metadata is invalid.")
 
-    stored_owner_id = metadata.get("owner_id")
-    if stored_owner_id is not None:
-        try:
-            stored_owner_id = int(stored_owner_id)
-        except (TypeError, ValueError) as error:
-            raise DatasetNotFoundError("Dataset metadata is invalid.") from error
+    try:
+        stored_owner_id = normalize_owner_key(metadata.get("owner_id"))
+        allowed_owner_ids = {
+            normalize_owner_key(candidate)
+            for candidate in (accepted_owner_ids or set())
+        }
+        if owner_id is not None:
+            allowed_owner_ids.add(normalize_owner_key(owner_id))
+    except DatasetError as error:
+        raise DatasetNotFoundError("Dataset metadata is invalid.") from error
 
-    if enforce_owner and stored_owner_id != owner_id:
+    if enforce_owner and stored_owner_id not in allowed_owner_ids:
         # Do not reveal whether a dataset exists for another account.
         raise DatasetNotFoundError("Dataset not found.")
 

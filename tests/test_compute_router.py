@@ -123,9 +123,10 @@ def test_qualifying_high_iteration_workload_requires_explicit_gpu_consent(
 
 def test_unsigned_analysis_stays_on_cpu(tmp_path):
     settings, _ = config(tmp_path)
+    settings["CPU_FALLBACK_MAX_WORK_UNITS"] = 1
     client = FakeGPUClient()
     result = run_analysis_compute(prepared_data(), "y", "x", [], 2, settings, client, None)
-    assert result.compute_mode == "CPU fallback"
+    assert result.compute_mode == "CPU"
     assert client.calls == 0
 
 
