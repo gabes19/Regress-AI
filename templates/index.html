@@ -16,10 +16,18 @@
       --line: #303030;
       --line-strong: #555555;
       --shadow: rgba(0, 0, 0, 0.42);
+      --accent: #9cffb6;
+      --accent-soft: rgba(156, 255, 182, 0.12);
+      --pointer-x: 50vw;
+      --pointer-y: 35vh;
     }
 
     * {
       box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
     }
 
     body {
@@ -35,10 +43,25 @@
     }
 
     .page {
+      position: relative;
+      isolation: isolate;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       padding: 28px;
+    }
+
+    .page::before {
+      position: fixed;
+      z-index: -1;
+      inset: 0;
+      background: radial-gradient(
+        520px circle at var(--pointer-x) var(--pointer-y),
+        rgba(156, 255, 182, 0.07),
+        transparent 68%
+      );
+      content: "";
+      pointer-events: none;
     }
 
     .topbar {
@@ -73,6 +96,13 @@
       white-space: nowrap;
     }
 
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 22px;
+    }
+
     .status a,
     .status button {
       border: 0;
@@ -86,6 +116,41 @@
       cursor: pointer;
     }
 
+    .header-cta {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      min-height: 42px;
+      border: 1px solid var(--text);
+      background: var(--text);
+      color: var(--bg);
+      padding: 0 16px;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      text-decoration: none;
+      white-space: nowrap;
+      transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+    }
+
+    .header-cta::after {
+      content: "\2193";
+      font-size: 15px;
+      line-height: 1;
+    }
+
+    .header-cta:hover {
+      background: transparent;
+      color: var(--text);
+      transform: translateY(1px);
+    }
+
+    .header-cta:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
     main {
       flex: 1;
       display: grid;
@@ -93,8 +158,20 @@
       padding: 56px 0 34px;
     }
 
+    .experience-grid {
+      display: grid;
+      grid-template-areas:
+        "preview"
+        "upload";
+      grid-template-columns: minmax(0, 1fr);
+      gap: 22px;
+      width: min(100%, 920px);
+    }
+
     .upload-panel {
-      width: min(100%, 720px);
+      grid-area: upload;
+      width: 100%;
+      scroll-margin-top: 24px;
       border: 1px solid var(--line);
       background: rgba(16, 16, 16, 0.94);
       box-shadow: 0 24px 80px var(--shadow);
@@ -293,6 +370,402 @@
       overflow-wrap: anywhere;
     }
 
+    .analysis-preview {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      grid-area: preview;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.025), transparent 45%),
+        rgba(11, 11, 11, 0.96);
+      box-shadow: 0 24px 80px var(--shadow);
+    }
+
+    .analysis-preview::after {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        110deg,
+        transparent 35%,
+        rgba(255, 255, 255, 0.035) 50%,
+        transparent 65%
+      );
+      content: "";
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(-80%);
+    }
+
+    .analysis-preview[data-stage="result"]::after {
+      animation: result-sheen 1.15s ease-out;
+    }
+
+    .preview-header,
+    .preview-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 17px 20px;
+    }
+
+    .preview-header {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .preview-kicker,
+    .preview-runtime,
+    .preview-step-count {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .live-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 0 rgba(156, 255, 182, 0.5);
+      animation: live-pulse 1.8s ease-out infinite;
+    }
+
+    .preview-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(300px, 0.92fr);
+      align-content: start;
+      gap: 24px;
+      flex: 1;
+      padding: 24px 20px 20px;
+    }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      grid-column: 1 / -1;
+      gap: 5px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .pipeline-step {
+      min-width: 0;
+      color: #656565;
+      font-size: 9px;
+      letter-spacing: 0.04em;
+      text-align: center;
+      text-transform: uppercase;
+      transition: color 260ms ease;
+    }
+
+    .pipeline-step::before {
+      display: block;
+      height: 2px;
+      margin-bottom: 8px;
+      background: #292929;
+      content: "";
+      transition: background 260ms ease, box-shadow 260ms ease;
+    }
+
+    .pipeline-step[data-state="complete"],
+    .pipeline-step[data-state="current"] {
+      color: var(--text);
+    }
+
+    .pipeline-step[data-state="complete"]::before,
+    .pipeline-step[data-state="current"]::before {
+      background: var(--accent);
+    }
+
+    .pipeline-step[data-state="current"]::before {
+      box-shadow: 0 0 12px rgba(156, 255, 182, 0.55);
+    }
+
+    .chart-card {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        #0d0d0d;
+      background-size: 32px 32px;
+      padding: 16px;
+    }
+
+    .chart-meta {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .chart-label {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .chart-value {
+      margin-top: 4px;
+      color: var(--text);
+      font-size: 26px;
+      line-height: 1;
+      transition: color 240ms ease;
+    }
+
+    .chart-value small {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .chart-state {
+      border: 1px solid var(--line-strong);
+      color: var(--muted);
+      padding: 5px 7px;
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      transition: border-color 240ms ease, color 240ms ease, background 240ms ease;
+    }
+
+    .analysis-preview[data-stage="result"] .chart-state {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .coefficient-chart {
+      display: block;
+      width: 100%;
+      height: 150px;
+      overflow: visible;
+    }
+
+    .axis-line,
+    .guide-line {
+      fill: none;
+      stroke: #404040;
+      stroke-width: 1;
+    }
+
+    .guide-line {
+      stroke-dasharray: 3 5;
+    }
+
+    .confidence-band {
+      fill: rgba(156, 255, 182, 0.09);
+      opacity: 0;
+      transition: opacity 550ms ease;
+    }
+
+    .trend-line {
+      fill: none;
+      stroke: var(--accent);
+      stroke-dasharray: 440;
+      stroke-dashoffset: 440;
+      stroke-linecap: square;
+      stroke-linejoin: round;
+      stroke-width: 2;
+      filter: drop-shadow(0 0 4px rgba(156, 255, 182, 0.3));
+      opacity: 0.22;
+      transition: stroke-dashoffset 850ms ease, opacity 300ms ease;
+    }
+
+    .chart-point {
+      fill: #0d0d0d;
+      stroke: var(--accent);
+      stroke-width: 2;
+      opacity: 0;
+      transform: scale(0.6);
+      transform-box: fill-box;
+      transform-origin: center;
+      transition: opacity 260ms ease, transform 360ms ease;
+    }
+
+    .analysis-preview[data-stage="configure"] .trend-line {
+      stroke-dashoffset: 330;
+      opacity: 0.55;
+    }
+
+    .analysis-preview[data-stage="estimate"] .trend-line {
+      stroke-dashoffset: 155;
+      opacity: 1;
+    }
+
+    .analysis-preview[data-stage="bootstrap"] .trend-line,
+    .analysis-preview[data-stage="result"] .trend-line {
+      stroke-dashoffset: 0;
+      opacity: 1;
+    }
+
+    .analysis-preview[data-step-index="2"] .chart-point:nth-of-type(-n + 2),
+    .analysis-preview[data-step-index="3"] .chart-point,
+    .analysis-preview[data-step-index="4"] .chart-point {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    .analysis-preview[data-stage="result"] .confidence-band {
+      opacity: 1;
+    }
+
+    .progress-track {
+      height: 2px;
+      margin-top: 12px;
+      overflow: hidden;
+      background: #282828;
+    }
+
+    .progress-fill {
+      width: var(--progress, 8%);
+      height: 100%;
+      background: var(--accent);
+      box-shadow: 0 0 10px rgba(156, 255, 182, 0.5);
+      transition: width 600ms ease;
+    }
+
+    .terminal {
+      min-height: 142px;
+      border-left: 1px solid var(--line-strong);
+      padding: 2px 0 2px 16px;
+    }
+
+    .terminal-line {
+      display: grid;
+      grid-template-columns: 16px minmax(0, 1fr);
+      gap: 7px;
+      min-height: 22px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+      transition: color 220ms ease;
+    }
+
+    .terminal-prompt {
+      color: var(--accent);
+    }
+
+    .terminal-line.is-emphasis {
+      color: var(--text);
+    }
+
+    .terminal-cursor::after {
+      display: inline-block;
+      width: 7px;
+      height: 13px;
+      margin-left: 5px;
+      background: var(--accent);
+      content: "";
+      vertical-align: -2px;
+      animation: cursor-blink 900ms steps(1, end) infinite;
+    }
+
+    .result-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-column: 1 / -1;
+      border: 1px solid var(--line);
+    }
+
+    .result-stat {
+      min-width: 0;
+      padding: 12px;
+    }
+
+    .result-stat + .result-stat {
+      border-left: 1px solid var(--line);
+    }
+
+    .result-label {
+      color: var(--muted);
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .result-value {
+      display: block;
+      margin-top: 6px;
+      color: var(--text);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .result-value.is-positive {
+      color: var(--accent);
+    }
+
+    .preview-footer {
+      border-top: 1px solid var(--line);
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      clip-path: inset(50%);
+    }
+
+    @keyframes live-pulse {
+      70% {
+        box-shadow: 0 0 0 7px rgba(156, 255, 182, 0);
+      }
+      100% {
+        box-shadow: 0 0 0 0 rgba(156, 255, 182, 0);
+      }
+    }
+
+    @keyframes cursor-blink {
+      50% {
+        opacity: 0;
+      }
+    }
+
+    @keyframes result-sheen {
+      0% {
+        opacity: 0;
+        transform: translateX(-80%);
+      }
+      35% {
+        opacity: 1;
+      }
+      100% {
+        opacity: 0;
+        transform: translateX(80%);
+      }
+    }
+
+    @media (max-width: 760px) {
+      .preview-body {
+        grid-template-columns: 1fr;
+      }
+
+      .pipeline,
+      .result-grid {
+        grid-column: auto;
+      }
+    }
+
     @media (max-width: 640px) {
       .page {
         padding: 20px;
@@ -307,6 +780,17 @@
         white-space: normal;
       }
 
+      .topbar-actions {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 14px;
+        width: 100%;
+      }
+
+      .header-cta {
+        width: 100%;
+      }
+
       main {
         place-items: start;
         padding-top: 34px;
@@ -314,6 +798,36 @@
 
       .upload-panel {
         padding: 24px;
+      }
+
+      .preview-body {
+        gap: 19px;
+        padding: 20px 16px 18px;
+      }
+
+      .pipeline-step {
+        font-size: 0;
+      }
+
+      .pipeline-step::before {
+        margin-bottom: 0;
+      }
+
+      .coefficient-chart {
+        height: 128px;
+      }
+
+      .terminal {
+        min-height: 154px;
+      }
+
+      .result-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .result-stat + .result-stat {
+        border-top: 1px solid var(--line);
+        border-left: 0;
       }
 
       .drop-zone {
@@ -330,6 +844,31 @@
         width: 100%;
       }
     }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+
+      .page::before {
+        display: none;
+      }
+
+      .live-dot,
+      .terminal-cursor::after,
+      .analysis-preview[data-stage="result"]::after {
+        animation: none;
+      }
+
+      .trend-line,
+      .chart-point,
+      .confidence-band,
+      .progress-fill,
+      .pipeline-step,
+      .pipeline-step::before {
+        transition: none;
+      }
+    }
   </style>
 </head>
 <body>
@@ -339,7 +878,8 @@
         <img class="brand-logo" src="{{ url_for('static', filename='logo.png') }}" alt="">
         RegressAI
       </h1>
-      <div class="status">
+      <div class="topbar-actions">
+        <div class="status">
         {% if current_user %}
           {{ current_user.display_name or current_user.email }} · GPU {{ gpu_quota.daily }}/day, {{ gpu_quota.monthly }}/month
           <form action="/logout" method="post" style="display:inline">
@@ -350,12 +890,12 @@
           <a href="/login">Log in to access cloud GPU + LLM features</a>
         {% else %}
           CPU + deterministic mode
-        {% endif %}
-      </div>
+          {% endif %}
     </header>
 
     <main>
-      <section class="upload-panel" aria-labelledby="upload-title">
+      <div class="experience-grid">
+      <section class="upload-panel" id="upload" aria-labelledby="upload-title">
         <h2 id="upload-title">Upload CSV</h2>
         <p class="intro">
           Start a regression analysis from your dataset. Choose a clean CSV file,
@@ -411,7 +951,99 @@
           sensitive data.
         </p>
       </section>
+
+      <section
+        class="analysis-preview"
+        data-analysis-preview
+        data-stage="upload"
+        data-step-index="0"
+        aria-labelledby="preview-title"
+      >
+        <h2 class="sr-only" id="preview-title">Example RegressAI analysis</h2>
+        <p class="sr-only">
+          A visual demonstration of a CSV moving through configuration, regression,
+          bootstrap uncertainty, and a stable robustness result.
+        </p>
+
+        <div class="preview-header" aria-hidden="true">
+          <span class="live-label"><span class="live-dot"></span>Live simulation</span>
+          <span class="preview-runtime">CPU / 0.82s</span>
+        </div>
+
+        <div class="preview-body" aria-hidden="true">
+          <ol class="pipeline">
+            <li class="pipeline-step" data-pipeline-step data-state="current">Upload</li>
+            <li class="pipeline-step" data-pipeline-step>Configure</li>
+            <li class="pipeline-step" data-pipeline-step>Estimate</li>
+            <li class="pipeline-step" data-pipeline-step>Bootstrap</li>
+            <li class="pipeline-step" data-pipeline-step>Result</li>
+          </ol>
+
+          <div class="chart-card">
+            <div class="chart-meta">
+              <div>
+                <div class="chart-label">Education coefficient</div>
+                <div class="chart-value"><span data-coefficient>--</span> <small>$/hr</small></div>
+              </div>
+              <span class="chart-state" data-analysis-status>Ingesting</span>
+            </div>
+
+            <svg class="coefficient-chart" viewBox="0 0 400 150" role="img" aria-label="Simulated coefficient stability chart">
+              <line class="axis-line" x1="28" y1="130" x2="382" y2="130"></line>
+              <line class="guide-line" x1="28" y1="80" x2="382" y2="80"></line>
+              <line class="guide-line" x1="28" y1="30" x2="382" y2="30"></line>
+              <path class="confidence-band" d="M35 94 L132 68 L228 75 L325 58 L380 64 L380 88 L325 82 L228 99 L132 92 L35 118 Z"></path>
+              <path class="trend-line" d="M35 106 L132 80 L228 87 L325 70 L380 76"></path>
+              <circle class="chart-point" cx="35" cy="106" r="4"></circle>
+              <circle class="chart-point" cx="132" cy="80" r="4"></circle>
+              <circle class="chart-point" cx="228" cy="87" r="4"></circle>
+              <circle class="chart-point" cx="325" cy="70" r="4"></circle>
+              <circle class="chart-point" cx="380" cy="76" r="4"></circle>
+            </svg>
+
+            <div class="progress-track">
+              <div class="progress-fill" data-progress></div>
+            </div>
+          </div>
+
+          <div class="terminal">
+            <div class="terminal-line is-emphasis">
+              <span class="terminal-prompt">&gt;</span>
+              <span data-terminal-primary>Reading wage_data.csv</span>
+            </div>
+            <div class="terminal-line">
+              <span>+</span>
+              <span data-terminal-secondary>Validating columns and observations</span>
+            </div>
+            <div class="terminal-line">
+              <span>+</span>
+              <span data-terminal-tertiary>Preparing numeric matrix</span>
+            </div>
+            <div class="terminal-line terminal-cursor">
+              <span></span>
+              <span data-terminal-detail>1,250 rows detected</span>
+            </div>
+          </div>
+
+          <div class="result-grid">
+            <div class="result-stat">
+              <span class="result-label">Observations</span>
+              <strong class="result-value" data-observations>1,250</strong>
+            </div>
+            <div class="result-stat">
+              <span class="result-label">95% interval</span>
+              <strong class="result-value" data-interval>--</strong>
+            </div>
+            <div class="result-stat">
+              <span class="result-label">Robustness</span>
+              <strong class="result-value" data-robustness>Pending</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+      </div>
     </main>
   </div>
+  <script src="{{ url_for('static', filename='upload-preview.js') }}" defer></script>
 </body>
 </html>
