@@ -31,7 +31,7 @@ Cloud execution is optional, account-gated, and disabled by default. Signed-out 
 
 The initial worker target is an A4000 Flex worker with zero active workers and one maximum worker. 
 
-The work-unit measure remains useful for CPU/GPU benchmark comparisons:
+The work-unit measure is useful for CPU/GPU benchmark comparisons:
 
 ```text
 work units =
@@ -41,6 +41,8 @@ bootstrap iterations
 ```
 
 GPU execution is an explicit per-analysis choice for signed-in users and is not gated by a minimum workload. Each account is limited to 3 GPU runs per day and 30 per month, along with the configured payload, iteration, concurrency, and budget limits.
+
+Some GPU runs may take longer than expected if the worker needs to be cold-started.
 
 ## CPU/GPU benchmarks
 
