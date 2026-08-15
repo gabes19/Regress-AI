@@ -658,15 +658,11 @@
                 max="{{ config.MAX_BOOTSTRAP_ITERATIONS }}"
                 step="100"
                 value="{{ bootstrap_value }}"
-                aria-controls="gpu-opt-in-panel"
               >
             </div>
 
             {% if current_user %}
-              <fieldset
-                id="gpu-opt-in-panel"
-                {% if bootstrap_value <= gpu_opt_in_iteration_threshold %}hidden{% endif %}
-              >
+              <fieldset id="gpu-opt-in-panel">
                 <legend>Cloud GPU</legend>
                 <label class="control-option" for="use_gpu">
                   <input
@@ -674,10 +670,10 @@
                     type="checkbox"
                     name="use_gpu"
                     {% if selected_gpu_opt_in|default(false) %}checked{% endif %}
-                    {% if bootstrap_value <= gpu_opt_in_iteration_threshold %}disabled{% endif %}
                   >
-                  <span>Allow this analysis to use cloud GPU computing</span>
+                  <span>Use cloud GPU for this analysis</span>
                 </label>
+                <p class="hint">Uses one GPU run from your quota. Leave unchecked to use CPU.</p>
               </fieldset>
             {% else %}
               <p class="hint">This analysis will use CPU compute and a deterministic research summary.</p>
@@ -732,26 +728,6 @@
   <script>
     const analysisForm = document.querySelector(".analysis-form");
     const runAnalysisButton = document.querySelector("#run-analysis-button");
-    const bootstrapIterations = document.querySelector("#bootstrap_iterations");
-    const gpuOptInPanel = document.querySelector("#gpu-opt-in-panel");
-    const gpuOptInCheckbox = document.querySelector("#use_gpu");
-    const gpuOptInThreshold = {{ gpu_opt_in_iteration_threshold|tojson }};
-
-    function syncGpuOptIn() {
-      if (!gpuOptInPanel || !gpuOptInCheckbox) {
-        return;
-      }
-      const iterations = Number.parseInt(bootstrapIterations.value, 10);
-      const requiresConsent = Number.isFinite(iterations) && iterations > gpuOptInThreshold;
-      gpuOptInPanel.hidden = !requiresConsent;
-      gpuOptInCheckbox.disabled = !requiresConsent;
-      if (!requiresConsent) {
-        gpuOptInCheckbox.checked = false;
-      }
-    }
-
-    bootstrapIterations.addEventListener("input", syncGpuOptIn);
-    syncGpuOptIn();
 
     analysisForm.addEventListener("submit", () => {
       if (!analysisForm.checkValidity()) {

@@ -49,7 +49,7 @@ def test_invalid_bootstrap_iterations_are_shown_on_configuration_page(
     assert b"Bootstrap iterations must be a whole number." in response.data
 
 
-def test_gpu_checkbox_is_hidden_until_iterations_exceed_threshold(
+def test_gpu_checkbox_is_always_available_to_signed_in_users(
     sample_dataset_client,
 ):
     client, dataset = sample_dataset_client
@@ -59,9 +59,14 @@ def test_gpu_checkbox_is_hidden_until_iterations_exceed_threshold(
     response = client.get(f"/configure/{dataset.dataset_id}")
 
     assert response.status_code == 200
-    assert re.search(rb'id="gpu-opt-in-panel"\s+hidden', response.data)
-    assert re.search(rb'<input[^>]+id="use_gpu"[^>]+disabled[^>]*>', response.data)
-    assert b"iterations > gpuOptInThreshold" in response.data
+    panel = re.search(
+        rb'<fieldset\s+id="gpu-opt-in-panel"(?P<attributes>[^>]*)>',
+        response.data,
+    )
+    assert panel and b"hidden" not in panel.group("attributes")
+    checkbox = re.search(rb'<input[^>]+id="use_gpu"[^>]*>', response.data)
+    assert checkbox and b"disabled" not in checkbox.group(0)
+    assert b"Use cloud GPU for this analysis" in response.data
 
 
 def test_gpu_checkbox_selection_is_preserved_after_validation_error(

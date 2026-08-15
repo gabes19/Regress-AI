@@ -30,21 +30,6 @@ def calculate_work_units(data, bootstrap_iterations):
     return len(data.y) * (len(data.X.columns) + 1) * bootstrap_iterations
 
 
-def should_route_to_gpu(
-    data,
-    bootstrap_iterations,
-    minimum_work_units,
-    opt_in_iteration_threshold,
-    gpu_opt_in=False,
-):
-    work_units = calculate_work_units(data, bootstrap_iterations)
-    workload_qualifies = work_units >= minimum_work_units
-    consent_granted = (
-        bootstrap_iterations <= opt_in_iteration_threshold or gpu_opt_in
-    )
-    return workload_qualifies and consent_granted
-
-
 def _run_cpu(data, dependent_variable, main_independent_variable, controls, iterations, mode):
     started = perf_counter()
     models = fit_models(
@@ -84,31 +69,21 @@ def run_analysis_compute(
         )
 
     work_units = calculate_work_units(data, bootstrap_iterations)
-    consent_required = (
-        work_units >= config["GPU_MIN_WORK_UNITS"]
-        and bootstrap_iterations > config["GPU_OPT_IN_ITERATION_THRESHOLD"]
-    )
-    if consent_required and not gpu_opt_in:
-        raise ComputeUnavailableError(
-            "This workload qualifies for cloud GPU computing. Enable the cloud "
-            "GPU option or reduce the bootstrap iterations and try again."
+    if not gpu_opt_in:
+        return _run_cpu(
+            data, dependent_variable, main_independent_variable,
+            controls, bootstrap_iterations, "CPU"
         )
-    candidate = should_route_to_gpu(
-        data,
-        bootstrap_iterations,
-        config["GPU_MIN_WORK_UNITS"],
-        config["GPU_OPT_IN_ITERATION_THRESHOLD"],
-        gpu_opt_in,
-    )
+
     provider_available = bool(
         config.get("RUNPOD_ENABLED")
         and gpu_client is not None
         and gpu_client.configured
     )
-    if not candidate or not provider_available:
-        return _run_cpu(
-            data, dependent_variable, main_independent_variable,
-            controls, bootstrap_iterations, "CPU"
+    if not provider_available:
+        raise ComputeUnavailableError(
+            "Cloud GPU is not configured or currently unavailable. Uncheck the "
+            "cloud GPU option to run this analysis on CPU."
         )
     try:
         gpu_request = build_gpu_request(

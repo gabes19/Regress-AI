@@ -13,7 +13,7 @@ RegressAI is a regression analysis and stress-testing tool for students, researc
 - Explore coefficient stability with an interactive Plotly chart.
 - View bootstrap uncertainty and a bootstrap coefficient histogram.
 - Run CPU analyses and receive deterministic research summaries without an account.
-- Log in to offload eligible bootstrap workloads to CUDA-enabled cloud GPU workers.
+- Log in to choose CUDA-enabled cloud GPU compute for an analysis.
 - Log in to receive AI-generated interpretation of regression results.
 - Export PDF and LaTeX reports while signed in or signed out.
 
@@ -27,11 +27,11 @@ Expensive bootstrap workloads can be offloaded to CUDA-enabled GPU workers throu
 
 ## Cloud GPU execution
 
-Cloud execution is optional, account-gated, and disabled by default. Signed-out analyses always use the existing statsmodels CPU implementation and a deterministic research summary; they never call OpenAI or RunPod. Signed-in eligible analyses may use cloud GPU and LLM features when those providers are configured. RegressAI prepares one finite numeric matrix locally, replaces user column names with neutral identifiers, compresses it, and sends only that matrix plus the model specification to a RunPod Serverless worker.
+Cloud execution is optional, account-gated, and disabled by default. Signed-out analyses always use the existing statsmodels CPU implementation and a deterministic research summary; they never call OpenAI or RunPod. Signed-in users can select cloud GPU compute for any analysis when the provider is configured. RegressAI prepares one finite numeric matrix locally, replaces user column names with neutral identifiers, compresses it, and sends only that matrix plus the model specification to a RunPod Serverless worker.
 
 The initial worker target is an A4000 Flex worker with zero active workers and one maximum worker. 
 
-For signed-in users, the measured policy routes jobs at 60,000,000 work units.
+The work-unit measure remains useful for CPU/GPU benchmark comparisons:
 
 ```text
 work units =
@@ -40,7 +40,7 @@ row count ×
 bootstrap iterations
 ```
 
-Analyses above 2,000 bootstrap iterations also require the user to explicitly enable cloud GPU computing in the configuration form; this consent does not bypass the measured workload threshold. Each account is limited to 3 GPU runs per day and 30 per month.
+GPU execution is an explicit per-analysis choice for signed-in users and is not gated by a minimum workload. Each account is limited to 3 GPU runs per day and 30 per month, along with the configured payload, iteration, concurrency, and budget limits.
 
 ## CPU/GPU benchmarks
 

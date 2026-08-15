@@ -128,8 +128,6 @@ def test_guest_analysis_never_calls_llm_or_gpu(
     monkeypatch.setitem(app_module.app.extensions, "google_oauth", object())
     monkeypatch.setitem(app_module.app.extensions, "runpod_client", gpu)
     monkeypatch.setitem(app_module.app.config, "RUNPOD_ENABLED", True)
-    monkeypatch.setitem(app_module.app.config, "GPU_MIN_WORK_UNITS", 1)
-    monkeypatch.setitem(app_module.app.config, "GPU_OPT_IN_ITERATION_THRESHOLD", 1)
     monkeypatch.setitem(app_module.app.config, "CPU_FALLBACK_MAX_WORK_UNITS", 1)
 
     response = client.post(

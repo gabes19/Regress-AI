@@ -7,7 +7,6 @@ import app as app_module
 from regressionlab.services.compute_router import (
     ComputeUnavailableError,
     run_analysis_compute,
-    should_route_to_gpu,
 )
 from regressionlab.services.data_processing import prepare_analysis_data
 from regressionlab.services.gpu_contract import (
@@ -35,8 +34,7 @@ def config(tmp_path):
         "sub": "1", "email": "u@example.com", "email_verified": True
     })
     return {
-        "RUNPOD_ENABLED": True, "GPU_OPT_IN_ITERATION_THRESHOLD": 2,
-        "GPU_MIN_WORK_UNITS": 1, "CPU_FALLBACK_MAX_WORK_UNITS": 1_000_000,
+        "RUNPOD_ENABLED": True, "CPU_FALLBACK_MAX_WORK_UNITS": 1_000_000,
         "GPU_MAX_ENCODED_PAYLOAD_BYTES": 15 * 1024 * 1024,
         "GPU_MAX_DECOMPRESSED_BYTES": 256 * 1024 * 1024,
         "GPU_MAX_BOOTSTRAP_ITERATIONS": 10_000,
@@ -84,41 +82,42 @@ def test_eligible_analysis_runs_gpu_once_without_cpu_duplication(tmp_path, monke
 
     monkeypatch.setattr("regressionlab.services.compute_router._run_cpu", cpu_must_not_run)
     result = run_analysis_compute(
-        prepared_data(), "y", "x", [], 2, settings, client, user["id"]
+        prepared_data(), "y", "x", [], 2, settings, client, user["id"],
+        gpu_opt_in=True,
     )
     assert client.calls == 1
     assert result.compute_mode == "GPU"
 
 
-def test_measured_work_threshold_and_high_iteration_consent_both_apply():
-    data = prepared_data()
-
-    assert should_route_to_gpu(data, 2_000, 1, 2_000) is True
-    assert should_route_to_gpu(data, 2_001, 1, 2_000) is False
-    assert should_route_to_gpu(
-        data, 2_001, 1, 2_000, gpu_opt_in=True
-    ) is True
-    assert should_route_to_gpu(
-        data, 2_001, 1_000_000, 2_000, gpu_opt_in=True
-    ) is False
-
-
-def test_qualifying_high_iteration_workload_requires_explicit_gpu_consent(
+def test_signed_in_user_explicitly_selects_cpu_or_gpu(
     tmp_path,
 ):
     settings, user = config(tmp_path)
     client = FakeGPUClient()
 
-    with pytest.raises(ComputeUnavailableError, match="Enable the cloud GPU"):
-        run_analysis_compute(
-            prepared_data(), "y", "x", [], 3, settings, client, user["id"]
-        )
+    cpu_result = run_analysis_compute(
+        prepared_data(), "y", "x", [], 3, settings, client, user["id"]
+    )
+    assert cpu_result.compute_mode == "CPU"
+    assert client.calls == 0
 
-    result = run_analysis_compute(
+    gpu_result = run_analysis_compute(
         prepared_data(), "y", "x", [], 3, settings, client, user["id"],
         gpu_opt_in=True,
     )
-    assert result.compute_mode == "GPU"
+    assert gpu_result.compute_mode == "GPU"
+    assert client.calls == 1
+
+
+def test_selected_gpu_reports_unconfigured_provider(tmp_path):
+    settings, user = config(tmp_path)
+    settings["RUNPOD_ENABLED"] = False
+
+    with pytest.raises(ComputeUnavailableError, match="not configured"):
+        run_analysis_compute(
+            prepared_data(), "y", "x", [], 2, settings, FakeGPUClient(),
+            user["id"], gpu_opt_in=True,
+        )
 
 
 def test_unsigned_analysis_stays_on_cpu(tmp_path):
@@ -142,7 +141,10 @@ def test_large_quota_rejection_does_not_start_unsafe_cpu_fallback(tmp_path):
         3, 30, Decimal("2"), Decimal("25")
     )
     with pytest.raises(ComputeUnavailableError, match="Reduce"):
-        run_analysis_compute(prepared_data(), "y", "x", [], 2, settings, first, user["id"])
+        run_analysis_compute(
+            prepared_data(), "y", "x", [], 2, settings, first, user["id"],
+            gpu_opt_in=True,
+        )
 
 
 def test_flask_renders_cpu_fallback_after_provider_failure(
@@ -163,7 +165,6 @@ def test_flask_renders_cpu_fallback_after_provider_failure(
 
     overrides = {
         "GPU_USAGE_DATABASE": database, "RUNPOD_ENABLED": True,
-        "GPU_OPT_IN_ITERATION_THRESHOLD": 2, "GPU_MIN_WORK_UNITS": 1,
         "CPU_FALLBACK_MAX_WORK_UNITS": 1_000_000,
     }
     for key, value in overrides.items():
@@ -178,6 +179,7 @@ def test_flask_renders_cpu_fallback_after_provider_failure(
         "dependent_variable": "wage",
         "main_independent_variable": "education",
         "bootstrap_iterations": "2",
+        "use_gpu": "on",
     })
     assert response.status_code == 200
     assert b"CPU fallback" in response.data

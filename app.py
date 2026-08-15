@@ -408,10 +408,6 @@ def configure_dataset(dataset_id):
         dataset_id=dataset.dataset_id,
         filename=dataset.original_filename,
         columns=columns,
-        gpu_opt_in_iteration_threshold=app.config[
-            "GPU_OPT_IN_ITERATION_THRESHOLD"
-        ],
-        gpu_min_work_units=app.config["GPU_MIN_WORK_UNITS"],
     )
 
 @app.route("/sample/wage-education", methods=["POST"])
@@ -483,10 +479,6 @@ def analyze():
                 selected_controls=controls,
                 selected_bootstrap_iterations=bootstrap_iterations,
                 selected_gpu_opt_in=gpu_opt_in_requested,
-                gpu_opt_in_iteration_threshold=app.config[
-                    "GPU_OPT_IN_ITERATION_THRESHOLD"
-                ],
-                gpu_min_work_units=app.config["GPU_MIN_WORK_UNITS"],
             ),
             400,
         )
@@ -524,11 +516,6 @@ def analyze():
             "The stored dataset could not be read. Upload it again."
         )
 
-    gpu_opt_in = (
-        bootstrap_iterations > app.config["GPU_OPT_IN_ITERATION_THRESHOLD"]
-        and gpu_opt_in_requested
-    )
-
     try:
         prepared_data = prepare_analysis_data(
             df=df,
@@ -547,7 +534,7 @@ def analyze():
             gpu_client=app.extensions.get("runpod_client"),
             user_id=(user or {}).get("id"),
             logger=app.logger,
-            gpu_opt_in=gpu_opt_in,
+            gpu_opt_in=gpu_opt_in_requested,
         )
         model_results = compute_result.model_results
         bootstrap_results = compute_result.bootstrap_results
