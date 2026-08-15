@@ -143,6 +143,12 @@
       font-size: 20px;
       font-weight: 700;
       letter-spacing: 0;
+      text-decoration: none;
+    }
+
+    .brand:hover,
+    .brand:focus-visible {
+      color: var(--accent);
     }
 
     .brand-logo {
@@ -902,10 +908,10 @@
       <span class="scroll-cue-chevron" aria-hidden="true"></span>
     </div>
     <header class="topbar" aria-label="Application header">
-      <h1 class="brand">
+      <a class="brand" href="/" aria-label="RegressAI home">
         <img class="brand-logo" src="{{ url_for('static', filename='logo.png') }}" alt="">
         RegressAI
-      </h1>
+      </a>
       <div class="topbar-actions">
         <div class="status">
         {% if current_user %}

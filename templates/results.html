@@ -60,6 +60,12 @@
       font-size: 20px;
       font-weight: 700;
       letter-spacing: 0;
+      text-decoration: none;
+    }
+
+    .brand:hover,
+    .brand:focus-visible {
+      color: var(--accent);
     }
 
     .brand-logo {
@@ -441,10 +447,10 @@
 <body>
   <div class="page">
     <header class="topbar" aria-label="Application header">
-      <h1 class="brand">
+      <a class="brand" href="/" aria-label="RegressAI home">
         <img class="brand-logo" src="{{ url_for('static', filename='logo.png') }}" alt="">
         RegressAI
-      </h1>
+      </a>
       <div class="status">
         {% if current_user %}
           {{ current_user.display_name or current_user.email }} · GPU {{ gpu_quota.daily }}/day, {{ gpu_quota.monthly }}/month

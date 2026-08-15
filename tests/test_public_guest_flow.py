@@ -105,6 +105,20 @@ def test_guest_header_explains_premium_features_and_keeps_upload_available(
     assert b"CPU compute and a deterministic research summary" in configure.data
 
 
+def test_brand_and_configure_back_link_return_to_homepage(
+    sample_dataset_client,
+):
+    client, dataset = sample_dataset_client
+
+    homepage = client.get("/")
+    configure = client.get(f"/configure/{dataset.dataset_id}")
+
+    brand_link = rb'<a class="brand" href="/" aria-label="RegressAI home">'
+    assert re.search(brand_link, homepage.data)
+    assert re.search(brand_link, configure.data)
+    assert re.search(rb'<a class="button" href="/">&larr; Back</a>', configure.data)
+
+
 def test_guest_analysis_never_calls_llm_or_gpu(
     sample_dataset_client,
     monkeypatch,
